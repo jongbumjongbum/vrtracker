@@ -970,7 +970,9 @@
       '<h3>새 사이클 입력</h3>' +
       '<div class="card-desc">아래 주문표대로 매매했다면 그 결과를, 안 했다면(홀드) 오늘 종가와 기존 보유수량 그대로를 그 아래 입력칸 4개에 입력하세요. 그러면 다음 사이클의 매수가·매도가·매수한도가 자동으로 다시 계산돼요.</div>' +
       '<h3 style="margin-top:16px;font-size:14px;">지금 걸어둘 주문표</h3>' +
-      '<div class="card-desc">전부 체결되면 E가 V로 돌아와요. 한 가격에 몰아서 걸지 않고 현재가~밴드가 사이를 지정가(limit) 주문 여러 개로 나눴어요 — 가격 간격이 항상 $' + MAX_LADDER_PRICE_STEP + ' 이내가 되도록 단계 수를 자동으로 맞춰요. 수량은 항상 정수예요.</div>' +
+      '<div class="card-desc">라오어 실제 중계표 방식 그대로예요 — 밴드가에서 시작해서 ' + TRANCHE_SIZE + '주씩 체결됐다고 가정하며 다음 단계 가격을 다시 계산(밴드금액÷그때까지 수량)해서, 가격이 계속 불리한 방향으로 갈 때를 대비한 지정가(limit) 주문들을 미리 걸어두는 표예요. 매수는 매수한도(Pool%) 안에서, 매도는 E가 V로 돌아오는 지점까지예요.' +
+        (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ', 표 계산에는 안 쓰여요)</span>') : '') +
+      '</div>' +
       renderOrderTable(inst, last, buyBand, sellBand, limit) +
       '<div class="preview-band" style="display:none;">' +
         '<span><b>지금 활성화된 밴드</b></span>' +
@@ -1353,61 +1355,60 @@
     });
   }
 
-  var MAX_LADDER_PRICE_STEP = 1; // dollars — consecutive tranche prices stay within this gap
+  var TRANCHE_SIZE = 8; // shares per rung, matches 라오어's actual 중계표 ("8개씩")
 
-  // Splits a total whole-share quantity evenly across limit-order tranches at
-  // linearly-spaced prices from priceStart (near today's price) to priceEnd
-  // (the exact band price). The tranche count is chosen so consecutive
-  // tranche prices never differ by more than maxPriceStep dollars — more
-  // tranches for a wider price range, fewer for a narrow one — capped by the
-  // whole-share quantity available (each tranche needs at least 1 share).
-  // Every tranche gets the same share count except possibly the last, which
-  // absorbs the remainder.
-  function buildLadder(totalQty, priceStart, priceEnd, maxPriceStep){
-    totalQty = Math.floor(Math.max(0, totalQty));
-    if (totalQty <= 0 || !(priceStart > 0) || !(priceEnd > 0)) return [];
-    var priceRange = Math.abs(priceEnd - priceStart);
-    var neededN = priceRange > 0 ? Math.ceil(priceRange / maxPriceStep) : 1;
-    var n = Math.max(1, Math.min(neededN, totalQty));
-    var base = Math.floor(totalQty / n);
-    var remainder = totalQty - base * n;
+  // Reproduces the real 중계표 mechanic: each rung's price is the band dollar
+  // amount divided by the share count held BEFORE that rung (buyBand/q or
+  // sellBand/q) — not linear interpolation across a price range. Since q
+  // grows (buy) or shrinks (sell) by TRANCHE_SIZE each rung, the trigger
+  // price naturally steps away from the band on its own; the ladder starts
+  // exactly AT the band price and extends further in the adverse direction.
+  // `canAfford(cumulativeQty, cost)` decides whether to include the next
+  // rung; returning false stops the ladder there.
+  function buildBandLadder(startQty, bandDollar, direction, canAfford){
     var tranches = [];
-    for (var i=0; i<n; i++){
-      var priceI = priceStart + (priceEnd - priceStart) * (i+1)/n;
-      var qtyI = base + (i < remainder ? 1 : 0);
-      if (qtyI > 0) tranches.push({ price: round2(priceI), qty: qtyI });
+    var q = startQty;
+    var spent = 0;
+    for (var i=0; i<2000; i++){
+      if (direction < 0 && q - TRANCHE_SIZE < 0) break;
+      var price = bandDollar / q;
+      var cost = TRANCHE_SIZE * price;
+      if (!canAfford(tranches.length * TRANCHE_SIZE + TRANCHE_SIZE, spent + cost)) break;
+      tranches.push({ price: round2(price), qty: TRANCHE_SIZE });
+      spent += cost;
+      q += direction * TRANCHE_SIZE;
     }
     return tranches;
   }
-
-  var LADDER_RANGE_PCT = 0.05; // ladder only spans within +/-5% of the band price, not all the way to today's price
 
   function renderOrderTable(inst, last, buyBand, sellBand, limit){
     var qty = last.qty || 0;
     var V = last.Vnext;
     var buyLimitAmt = round2(last.Pool * (limit.buyPct/100));
-    var livePrice = getLivePrice(inst.ticker);
-    var lastKnownPrice = last.price != null ? last.price : (inst.cycles.length ? inst.cycles[inst.cycles.length-1].price : inst.initPrice);
-    var refNow = livePrice != null ? livePrice : lastKnownPrice;
-
     var buyTranches = [], sellTranches = [], note = "";
 
     if (qty > 0){
-      var buyPrice = buyBand / qty;
-      var sellPrice = sellBand / qty;
-      var buyQtyTotal = Math.floor(Math.min(Math.max(0, (V - buyBand) / buyPrice), buyLimitAmt / buyPrice));
-      var sellQtyTotal = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPrice), qty));
-      var buyCeil = buyPrice * (1 + LADDER_RANGE_PCT);
-      var sellFloor = sellPrice * (1 - LADDER_RANGE_PCT);
-      var buyStart = (refNow != null && refNow > buyPrice) ? Math.min(refNow, buyCeil) : buyPrice;
-      var sellStart = (refNow != null && refNow < sellPrice) ? Math.max(refNow, sellFloor) : sellPrice;
-      buyTranches = buildLadder(buyQtyTotal, buyStart, buyPrice, MAX_LADDER_PRICE_STEP);
-      sellTranches = buildLadder(sellQtyTotal, sellStart, sellPrice, MAX_LADDER_PRICE_STEP);
-      if ((V - buyBand) > buyLimitAmt + 0.01) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 금액보다 적게 매수돼요.';
+      var buyPriceInit = buyBand / qty;
+      var sellPriceInit = sellBand / qty;
+      // Don't buy past the point where E would already be restored to V,
+      // even if the pool limit would allow more.
+      var maxBuyQty = Math.floor(Math.max(0, (V - buyBand) / buyPriceInit));
+      buyTranches = buildBandLadder(qty, buyBand, +1, function(cumQty, cumSpent){
+        return cumQty <= maxBuyQty && cumSpent <= buyLimitAmt;
+      });
+      var boughtQty = buyTranches.length * TRANCHE_SIZE;
+      if (boughtQty < maxBuyQty) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 수량보다 적게 매수돼요.';
+
+      // Sell has no pool-based limit — only stop once E would be restored to V.
+      var maxSellQty = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPriceInit), qty));
+      sellTranches = buildBandLadder(qty, sellBand, -1, function(cumQty){
+        return cumQty <= maxSellQty;
+      });
     } else {
-      var refPrice = refNow || inst.initPrice || 0;
+      var refPrice = inst.initPrice || (inst.cycles.length ? inst.cycles[inst.cycles.length-1].price : 0);
       if (refPrice > 0){
-        buyTranches = buildLadder(Math.floor(buyLimitAmt/refPrice), refPrice, refPrice, MAX_LADDER_PRICE_STEP);
+        var affordableQty = Math.floor(buyLimitAmt/refPrice);
+        if (affordableQty > 0) buyTranches = [{ price: round2(refPrice), qty: affordableQty }];
         note = '보유수량 0 — 이번엔 가격 상관없이 무조건 매수예요.';
       }
     }
@@ -1425,15 +1426,10 @@
       }).join("");
     }
 
-    var priceRefNote = livePrice != null
-      ? ('실시간가 ' + fmtMoney(livePrice) + ' 기준으로 분할했어요.')
-      : (lastKnownPrice ? ('직전 기록가 ' + fmtMoney(lastKnownPrice) + ' 기준으로 분할했어요 (실시간가 못 가져옴).') : '');
-
     return '<div class="table-wrap"><table><thead><tr>' +
       '<th>구분</th><th class="num">가격</th><th class="num">수량</th><th class="num">금액</th>' +
       '</tr></thead><tbody>' + trancheRows("매수", buyTranches) + trancheRows("매도", sellTranches) + '</tbody></table></div>' +
-      (priceRefNote ? ('<div class="footnote" style="margin-top:8px;">' + priceRefNote + '</div>') : '') +
-      (note ? ('<div class="footnote">' + note + '</div>') : '');
+      (note ? ('<div class="footnote" style="margin-top:8px;">' + note + '</div>') : '');
   }
 
   function renderHistoryTable(inst){
