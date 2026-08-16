@@ -1178,8 +1178,9 @@
     stats.innerHTML =
       stat("총 자산 (주식+예수금)", fmtCurrency(grandTotal)) +
       stat("주식 평가금", fmtCurrency(stockTotal)) +
-      stat("예수금 (VR Pool 합)", fmtCurrency(vrPoolTotal)) +
-      '<div class="stat"><div class="label">예수금 (VR 외, 직접입력)</div>' +
+      stat("예수금 합계 (아래 둘의 합, 도넛과 동일)", fmtCurrency(cashTotal)) +
+      stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
+      '<div class="stat"><div class="label">└ VR 외 예수금 (직접입력)</div>' +
         '<input id="extraCashInput" type="number" step="0.01" class="cell-input" style="width:100%;" ' +
         'value="' + extraCash + '" placeholder="예: 500" /></div>' +
       stat("직접추가 종목 수익금", fmtCurrency(manualProfit), false, pfPnlColor(manualProfit)) +
@@ -1254,8 +1255,9 @@
         '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--s-vr)" stroke-width="' + sw + '" ' +
           'stroke-dasharray="' + stockLen.toFixed(1) + ' ' + circumference.toFixed(1) + '" stroke-linecap="butt" ' +
           'transform="rotate(-90 ' + cx + ' ' + cy + ')" />' +
-        '<text x="' + cx + '" y="' + (cy-4) + '" text-anchor="middle" font-size="22" font-weight="700" fill="var(--ink)">' + stockPct.toFixed(0) + '%</text>' +
-        '<text x="' + cx + '" y="' + (cy+16) + '" text-anchor="middle" font-size="11" fill="var(--muted)">주식</text>' +
+        '<text x="' + cx + '" y="' + (cy-16) + '" text-anchor="middle" font-size="12" fill="var(--muted)">총자산</text>' +
+        '<text x="' + cx + '" y="' + (cy+2) + '" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">' + fmtCurrency(total) + '</text>' +
+        '<text x="' + cx + '" y="' + (cy+20) + '" text-anchor="middle" font-size="12" fill="var(--muted)">주식 ' + stockPct.toFixed(0) + '%</text>' +
       '</svg>';
     var legend =
       '<div style="display:flex;flex-direction:column;gap:10px;justify-content:center;">' +
