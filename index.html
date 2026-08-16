@@ -275,6 +275,21 @@
   }
   .user-badge .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .user-badge button { font-size: 11px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
+
+  .mode-switch, .currency-toggle { display: flex; gap: 4px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
+  .mode-switch button, .currency-toggle button {
+    border: none; background: transparent; color: var(--ink-soft); padding: 7px 10px;
+    border-radius: 7px; cursor: pointer; font-size: 12.5px; font-weight: 600; flex: 1;
+  }
+  .mode-switch button.active, .currency-toggle button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .currency-toggle { flex: 0 0 auto; }
+  .currency-toggle button { flex: none; padding: 6px 12px; }
+  .cell-input {
+    width: 90px; text-align: right; border: 1px solid var(--line); background: var(--panel-2);
+    color: var(--ink); border-radius: 6px; padding: 5px 7px; font-size: 12.5px;
+  }
+  .cell-input.ticker { width: 80px; text-align: left; text-transform: uppercase; }
+  .cell-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 
 <div class="app hidden" id="appRoot">
@@ -290,6 +305,11 @@
     <div class="user-badge">
       <span class="email" id="userEmail"></span>
       <button type="button" id="logoutBtn">로그아웃</button>
+    </div>
+
+    <div class="mode-switch" id="modeSwitch">
+      <button type="button" data-mode="vr" class="active">VR 기수</button>
+      <button type="button" data-mode="portfolio">포트폴리오</button>
     </div>
 
     <button class="btn btn-primary btn-block" id="newInstanceBtn" type="button">+ 새 VR 기수 만들기</button>
@@ -473,6 +493,7 @@
       if (cached){ try { state = JSON.parse(cached); } catch(e){} }
       hideAuthGate();
       render();
+      fetchFxRate();
 
       var cloud = await cloudLoad(currentUserId);
       if (cloud){
@@ -645,16 +666,66 @@
     return (cycleOrInit.E != null ? cycleOrInit.E : (cycleOrInit.qty||0)) + (cycleOrInit.Pool||0);
   }
 
+  function normalizeState(){
+    if (!state.instances) state.instances = [];
+    if (state.selectedId === undefined) state.selectedId = null;
+    if (!state.viewMode) state.viewMode = "vr";
+    if (!state.portfolioCurrency) state.portfolioCurrency = "USD";
+    if (!state.portfolio) state.portfolio = { holdings: [] };
+    if (!state.portfolio.holdings) state.portfolio.holdings = [];
+  }
+
+  function aggregateVrHoldingsByTicker(){
+    var map = {};
+    state.instances.forEach(function(inst){
+      var last = lastState(inst);
+      var qty = last.qty || 0;
+      if (qty <= 0) return;
+      var value = last.E != null ? last.E : qty * (inst.initPrice||0);
+      var t = (inst.ticker || "?").toUpperCase();
+      if (!map[t]) map[t] = { ticker: t, qty: 0, value: 0 };
+      map[t].qty += qty;
+      map[t].value += value;
+    });
+    return Object.keys(map).sort().map(function(t){ return map[t]; });
+  }
+
+  async function fetchFxRate(force){
+    if (!force && state.fx && state.fx.updatedAt && (Date.now() - new Date(state.fx.updatedAt).getTime()) < 30*60*1000) return;
+    try {
+      var res = await fetch("https://api.frankfurter.app/latest?from=USD&to=KRW");
+      var json = await res.json();
+      if (json && json.rates && json.rates.KRW){
+        state.fx = { usdkrw: json.rates.KRW, updatedAt: new Date().toISOString() };
+        saveState();
+        if (state.viewMode === "portfolio") renderMain();
+      }
+    } catch(e){ console.error("fx fetch failed", e); }
+  }
+
+  function fmtCurrency(usdAmount){
+    if (usdAmount == null || isNaN(usdAmount)) return "–";
+    if (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw){
+      var krw = usdAmount * state.fx.usdkrw;
+      return (krw<0?"-":"") + "₩" + Math.abs(Math.round(krw)).toLocaleString("ko-KR");
+    }
+    return fmtMoney0(usdAmount);
+  }
+
   /* ---------------- rendering ---------------- */
   var mainArea = document.getElementById("mainArea");
   var instanceList = document.getElementById("instanceList");
 
   function render(){
+    normalizeState();
     renderSidebar();
     renderMain();
   }
 
   function renderSidebar(){
+    Array.prototype.forEach.call(document.querySelectorAll("#modeSwitch button"), function(b){
+      b.classList.toggle("active", b.getAttribute("data-mode") === state.viewMode);
+    });
     instanceList.innerHTML = "";
     if (state.instances.length === 0){
       var p = document.createElement("div");
@@ -676,7 +747,7 @@
         '<div class="row1"><span class="iname">' + escapeHtml(inst.name) + '</span>' + typeChip(seg.type) + '</div>' +
         '<div class="meta"><span>' + escapeHtml(inst.ticker) + '</span><span class="num">' + fmtMoney0(tot) + '</span></div>' +
         (progress != null ? '<div class="progress-track"><div class="progress-fill" style="width:' + progress.toFixed(0) + '%"></div></div>' : '');
-      card.addEventListener("click", function(){ state.selectedId = inst.id; saveState(); render(); });
+      card.addEventListener("click", function(){ state.selectedId = inst.id; state.viewMode = "vr"; saveState(); render(); });
       instanceList.appendChild(card);
     });
   }
@@ -690,6 +761,7 @@
 
   function renderMain(){
     mainArea.innerHTML = "";
+    if (state.viewMode === "portfolio"){ renderPortfolio(); return; }
     var inst = state.instances.find(function(i){ return i.id === state.selectedId; });
     if (!inst){
       mainArea.innerHTML =
@@ -831,6 +903,138 @@
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
       saveState();
       render();
+    });
+  }
+
+  function renderPortfolio(){
+    var vrHoldings = aggregateVrHoldingsByTicker();
+    var vrTotal = vrHoldings.reduce(function(s,h){ return s + h.value; }, 0);
+    var manual = state.portfolio.holdings;
+    var manualValueTotal = 0, manualCostTotal = 0;
+    manual.forEach(function(h){
+      manualValueTotal += (h.qty||0) * (h.currentPrice||0);
+      manualCostTotal += (h.qty||0) * (h.avgCost||0);
+    });
+    var manualProfit = manualValueTotal - manualCostTotal;
+    var manualProfitPct = manualCostTotal > 0 ? (manualProfit/manualCostTotal*100) : null;
+    var grandTotal = vrTotal + manualValueTotal;
+
+    var head = document.createElement("div");
+    head.innerHTML =
+      '<div class="detail-head">' +
+        '<div><h2>전체 포트폴리오</h2><div class="sub">VR 보유종목 자동 반영 + 직접 추가한 종목</div></div>' +
+        '<div class="head-actions">' +
+          '<div class="currency-toggle" id="curToggle">' +
+            '<button type="button" data-cur="USD" class="' + (state.portfolioCurrency==="USD"?"active":"") + '">USD</button>' +
+            '<button type="button" data-cur="KRW" class="' + (state.portfolioCurrency==="KRW"?"active":"") + '">KRW</button>' +
+          '</div>' +
+          '<button class="btn btn-sm" id="fxRefreshBtn" type="button">환율 새로고침</button>' +
+        '</div>' +
+      '</div>';
+    mainArea.appendChild(head);
+
+    var fxNote = document.createElement("div");
+    fxNote.className = "footnote";
+    fxNote.style.marginTop = "-10px";
+    fxNote.style.marginBottom = "16px";
+    fxNote.textContent = (state.fx && state.fx.usdkrw)
+      ? ("환율 1 USD = " + state.fx.usdkrw.toFixed(2) + "원 · " + new Date(state.fx.updatedAt).toLocaleString("ko-KR") + " 기준 (frankfurter.app)")
+      : "환율 정보를 아직 못 가져왔어요. 지금은 USD로만 정확히 표시돼요 — 환율 새로고침을 눌러보세요.";
+    mainArea.appendChild(fxNote);
+
+    var stats = document.createElement("div");
+    stats.className = "stat-strip";
+    stats.innerHTML =
+      stat("총 평가금", fmtCurrency(grandTotal)) +
+      stat("VR 보유종목 평가금", fmtCurrency(vrTotal)) +
+      stat("직접추가 종목 평가금", fmtCurrency(manualValueTotal)) +
+      stat("직접추가 종목 수익금", fmtCurrency(manualProfit)) +
+      stat("직접추가 종목 수익률", manualProfitPct==null ? "–" : fmtPct(manualProfitPct,1), true);
+    mainArea.appendChild(stats);
+
+    var vrCard = document.createElement("div");
+    vrCard.className = "card";
+    vrCard.innerHTML = "<h3>VR 운용 중인 종목 (자동 반영)</h3>" +
+      '<div class="card-desc">모든 VR 기수의 현재 보유수량을 티커별로 합산했어요. 따로 입력할 필요 없어요. VR 구조상 매입원가 개념이 명확하지 않아 수익률은 표시하지 않아요.</div>' +
+      renderVrHoldingsTable(vrHoldings);
+    mainArea.appendChild(vrCard);
+
+    var manCard = document.createElement("div");
+    manCard.className = "card";
+    manCard.innerHTML = "<h3>직접 추가한 종목</h3>" +
+      '<div class="card-desc">VR로 운용하지 않는 다른 주식을 여기에 추가하고, 확인할 때마다 현재가를 업데이트해주세요.</div>' +
+      '<div id="manualHoldingsHost"></div>' +
+      '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>';
+    mainArea.appendChild(manCard);
+    renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
+
+    Array.prototype.forEach.call(document.querySelectorAll("#curToggle button"), function(btn){
+      btn.addEventListener("click", function(){
+        state.portfolioCurrency = btn.getAttribute("data-cur");
+        saveState();
+        renderMain();
+      });
+    });
+    document.getElementById("fxRefreshBtn").addEventListener("click", function(){ fetchFxRate(true); });
+    document.getElementById("addHoldingBtn").addEventListener("click", function(){
+      state.portfolio.holdings.push({ id: uid(), ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
+      saveState();
+      renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
+    });
+  }
+
+  function renderVrHoldingsTable(vrHoldings){
+    if (!vrHoldings.length) return '<div class="chart-empty">아직 VR에 보유수량이 없어요.</div>';
+    var rows = vrHoldings.map(function(h){
+      var avg = h.qty ? h.value/h.qty : 0;
+      return '<tr><td>' + escapeHtml(h.ticker) + '</td><td class="num">' + h.qty +
+        '</td><td class="num">' + fmtCurrency(avg) + '</td><td class="num">' + fmtCurrency(h.value) + '</td></tr>';
+    }).join("");
+    return '<div class="table-wrap"><table><thead><tr><th>티커</th><th class="num">수량</th>' +
+      '<th class="num">평균단가</th><th class="num">평가금</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function renderManualHoldingsTable(host){
+    var holdings = state.portfolio.holdings;
+    if (!holdings.length){
+      host.innerHTML = '<div class="chart-empty">아직 추가한 종목이 없어요.</div>';
+      return;
+    }
+    var rows = holdings.map(function(h){
+      var value = (h.qty||0) * (h.currentPrice||0);
+      var cost = (h.qty||0) * (h.avgCost||0);
+      var profit = value - cost;
+      var profitPct = cost > 0 ? (profit/cost*100) : null;
+      var profitCls = profit > 0 ? "var(--buy)" : (profit < 0 ? "var(--sell)" : "var(--ink-soft)");
+      return '<tr data-id="' + h.id + '">' +
+        '<td><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
+        '<td class="num"><input type="number" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
+        '<td class="num"><input type="number" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
+        '<td class="num"><input type="number" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" /></td>' +
+        '<td class="num">' + fmtCurrency(value) + '</td>' +
+        '<td class="num" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
+        '<td class="num" style="color:' + profitCls + '">' + (profitPct==null?"–":fmtPct(profitPct,1)) + '</td>' +
+        '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
+        '</tr>';
+    }).join("");
+    host.innerHTML = '<div class="table-wrap"><table><thead><tr>' +
+      '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
+      '<th class="num">평가금</th><th class="num">수익금</th><th class="num">수익률</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+    Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
+      var id = tr.getAttribute("data-id");
+      var h = holdings.find(function(x){ return x.id === id; });
+      function commit(){ saveState(); renderManualHoldingsTable(host); }
+      tr.querySelector(".h-ticker").addEventListener("change", function(){ h.ticker = this.value.trim().toUpperCase(); commit(); });
+      tr.querySelector(".h-qty").addEventListener("change", function(){ h.qty = parseFloat(this.value)||0; commit(); });
+      tr.querySelector(".h-cost").addEventListener("change", function(){ h.avgCost = parseFloat(this.value)||0; commit(); });
+      tr.querySelector(".h-price").addEventListener("change", function(){ h.currentPrice = parseFloat(this.value)||0; commit(); });
+      tr.querySelector(".h-del").addEventListener("click", function(){
+        state.portfolio.holdings = state.portfolio.holdings.filter(function(x){ return x.id !== id; });
+        saveState();
+        renderManualHoldingsTable(host);
+      });
     });
   }
 
@@ -1111,6 +1315,13 @@
     document.getElementById("ni_band").value = 15;
     newModal.classList.remove("hidden");
   }
+  Array.prototype.forEach.call(document.querySelectorAll("#modeSwitch button"), function(btn){
+    btn.addEventListener("click", function(){
+      state.viewMode = btn.getAttribute("data-mode");
+      saveState();
+      render();
+    });
+  });
   document.getElementById("newInstanceBtn").addEventListener("click", openNewInstanceModal);
   document.getElementById("ni_cancel").addEventListener("click", function(){ newModal.classList.add("hidden"); });
   document.getElementById("ni_type").addEventListener("change", function(){
