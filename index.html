@@ -375,7 +375,7 @@
         <input id="ni_g" type="number" />
       </div>
       <div class="field">
-        <label>목표 금액 ($, 선택)</label>
+        <label>최종 목표 금액 ($, 선택) <span class="hint">적립식→거치식→인출식 다 거친 최종 목표예요</span></label>
         <input id="ni_goal" type="number" step="1" placeholder="선택 입력" />
       </div>
       <div class="field">
@@ -583,6 +583,17 @@
     var days = Math.max(0, daysBetween(seg.startDate, atDate));
     var steps = Math.floor(days / def.gStepDays);
     return seg.startG + steps;
+  }
+
+  // Verification aid: when will G next tick up, and to what value.
+  function nextGIncrease(inst, atDate){
+    var seg = currentSegment(inst, atDate);
+    var def = TYPE_DEFAULTS[seg.type];
+    var days = Math.max(0, daysBetween(seg.startDate, atDate));
+    var steps = Math.floor(days / def.gStepDays);
+    var nextStepDays = (steps + 1) * def.gStepDays;
+    var d = new Date(new Date(seg.startDate).getTime() + nextStepDays*86400000);
+    return { date: d, nextG: seg.startG + steps + 1 };
   }
 
   function currentPoolLimit(inst, atDate){
@@ -835,6 +846,7 @@
     var last = lastState(inst);
     var G = currentG(inst, todayStr());
     var limit = currentPoolLimit(inst, todayStr());
+    var nextG = nextGIncrease(inst, todayStr());
     var band = inst.band;
     var buyBand = round2(last.Vnext * band.low);
     var sellBand = round2(last.Vnext * band.high);
@@ -845,7 +857,9 @@
     head.innerHTML =
       '<div class="detail-head">' +
         '<div><h2>' + escapeHtml(inst.name) + ' ' + typeChip(seg.type) + '</h2>' +
-        '<div class="sub">' + escapeHtml(inst.ticker) + ' · 사이클 ' + inst.cycleDays + '일 · 밴드 ±' + ((band.high-1)*100).toFixed(0) + '% · 시작 ' + fmtDate(inst.initDate) + '</div></div>' +
+        '<div class="sub">' + escapeHtml(inst.ticker) + ' · 사이클 ' + inst.cycleDays + '일 · 밴드 ±' + ((band.high-1)*100).toFixed(0) + '% · 시작 ' + fmtDate(inst.initDate) +
+          ' · Pool 매수한도 ' + limit.buyPct.toFixed(0) + '% · 다음 G 증가 ' + fmtDate(nextG.date) + '(G→' + nextG.nextG + ')' +
+        '</div></div>' +
         '<div class="head-actions">' +
           '<button class="btn btn-sm" id="switchTypeBtn" type="button">운용방식 전환</button>' +
           '<button class="btn btn-sm btn-ghost btn-danger" id="deleteInstBtn" type="button">삭제</button>' +
@@ -858,6 +872,15 @@
     var refInvested = costBasis.qty * costBasis.avgCost;
     var refProfit = costBasis.avgCost > 0 ? (refE - refInvested) : null;
     var refProfitPct = (refProfit != null && refInvested > 0) ? (refProfit/refInvested*100) : null;
+    var realAvg = inst.realAvgCost;
+    var realInvested = (realAvg != null) ? last.qty * realAvg : null;
+    var realProfit = (realAvg != null && last.qty > 0) ? (refE - realInvested) : null;
+    var realProfitPct = (realProfit != null && realInvested > 0) ? (realProfit/realInvested*100) : null;
+    function pnlStr(p, pct){
+      if (p == null) return "–";
+      return fmtMoney0(p) + (pct != null ? (" (" + fmtPct(pct,1) + ")") : "");
+    }
+    function pnlColor(p){ return p == null ? undefined : (p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : undefined)); }
 
     var stats = document.createElement("div");
     stats.className = "stat-strip";
@@ -868,10 +891,21 @@
       stat("G값", G, true) +
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
       stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
-      stat("실효평단 (참고용)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
-      stat("평가손익 (참고용)", refProfit == null ? "–" : fmtMoney0(refProfit)) +
-      stat("수익률 (참고용)", refProfitPct == null ? "–" : fmtPct(refProfitPct,1), true);
+      stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
+      stat("손익 (실효평단 기준)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
+      '<div class="stat"><div class="label">실제평단 (직접입력)</div>' +
+        '<input id="realAvgCostInput" type="number" step="0.01" class="cell-input" style="width:100%;" ' +
+        'value="' + (realAvg != null ? realAvg : "") + '" placeholder="예: 45.20" /></div>' +
+      stat("손익 (실제평단 기준)", pnlStr(realProfit, realProfitPct), false, pnlColor(realProfit));
     mainArea.appendChild(stats);
+
+    var realAvgInput = document.getElementById("realAvgCostInput");
+    realAvgInput.addEventListener("change", function(){
+      var v = parseFloat(this.value);
+      inst.realAvgCost = isNaN(v) ? null : v;
+      saveState();
+      render();
+    });
 
     // cycle entry card
     var entryCard = document.createElement("div");
@@ -899,7 +933,7 @@
       '<h3>전환 시점 참고 지표</h3>' +
       '<div class="card-desc">전환은 자동으로 되지 않아요 — 아래 숫자를 참고해서 직접 판단하고 위의 "운용방식 전환" 버튼을 눌러주세요.</div>' +
       '<div class="transition-grid">' +
-        metricBox("목표 금액 대비 진행률", inst.goalAmount ? fmtPct(goalPct,1) : "목표 미설정", inst.goalAmount ? ("목표 " + fmtMoney0(inst.goalAmount)) : "새 VR 설정에서 목표 금액을 넣어보세요") +
+        metricBox("최종 목표 대비 진행률", inst.goalAmount ? fmtPct(goalPct,1) : "목표 미설정", inst.goalAmount ? ("적립식→거치식→인출식 통틀어 최종목표 " + fmtMoney0(inst.goalAmount) + " 기준") : "새 VR 설정에서 최종 목표 금액을 넣어보세요") +
         metricBox("현재 Pool 비중", fmtPct(poolRatio,1), "거치식 권장 ≈50% · 인출식 권장 ≈75%") +
         metricBoxWithdrawCalc(tot) +
       '</div>';
@@ -1183,8 +1217,9 @@
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
   }
 
-  function stat(label, value, isPlain){
-    return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (isPlain?"":"num") + '">' + value + '</div></div>';
+  function stat(label, value, isPlain, color){
+    return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (isPlain?"":"num") + '"' +
+      (color ? (' style="color:' + color + '"') : '') + '>' + value + '</div></div>';
   }
   function field(label, inputHtml){
     return '<div class="field"><label>' + label + '</label>' + inputHtml + '</div>';
