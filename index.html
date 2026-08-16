@@ -250,9 +250,34 @@
 
   .footnote { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
   .kbd-hint { font-size: 11px; color: var(--muted); }
+
+  .auth-gate {
+    position: fixed; inset: 0; background: var(--bg); display: flex;
+    align-items: center; justify-content: center; z-index: 60; padding: 20px;
+  }
+  .auth-box {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 28px 26px; width: 100%; max-width: 360px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .auth-box h1 { font-size: 22px; }
+  .auth-box .tag { font-size: 12.5px; color: var(--muted); }
+  .auth-tabs { display: flex; gap: 6px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
+  .auth-tab {
+    flex: 1; border: none; background: transparent; color: var(--ink-soft); padding: 7px 0;
+    border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  .auth-tab.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .auth-msg { font-size: 12.5px; color: var(--ink-soft); min-height: 16px; }
+  .user-badge {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px;
+  }
+  .user-badge .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user-badge button { font-size: 11px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
 </style>
 
-<div class="app">
+<div class="app hidden" id="appRoot">
   <aside class="sidebar">
     <div class="brand">
       <div>
@@ -260,6 +285,11 @@
         <div class="tag">밸류리밸런싱 사이클 관리</div>
       </div>
       <button class="theme-toggle" id="themeToggle" type="button">라이트</button>
+    </div>
+
+    <div class="user-badge">
+      <span class="email" id="userEmail"></span>
+      <button type="button" id="logoutBtn">로그아웃</button>
     </div>
 
     <button class="btn btn-primary btn-block" id="newInstanceBtn" type="button">+ 새 VR 기수 만들기</button>
@@ -362,25 +392,151 @@
   </div>
 </div>
 
+<div class="auth-gate" id="authGate">
+  <div class="auth-box">
+    <div>
+      <h1>VR 트래커</h1>
+      <div class="tag">로그인하면 어떤 브라우저에서도 같은 기록을 볼 수 있어요.</div>
+    </div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-tab="login">로그인</button>
+      <button type="button" class="auth-tab" data-tab="signup">회원가입</button>
+    </div>
+    <div class="field"><label>이메일</label><input id="auth_email" type="email" autocomplete="email" /></div>
+    <div class="field"><label>비밀번호</label><input id="auth_password" type="password" autocomplete="current-password" /></div>
+    <div class="auth-msg" id="authMsg"></div>
+    <button class="btn btn-primary btn-block" id="authSubmit" type="button">로그인</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 (function(){
   "use strict";
 
-  /* ---------------- state ---------------- */
+  /* ---------------- auth + state ---------------- */
+  var SUPABASE_URL = "https://pnzvidgoedgcvwfueaiu.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_g9dpeyGzjC7dH3gSxOisWA_4Dc6bgxk";
   var STORE_KEY = "vr_tracker_state_v1";
-  var state = loadState();
+  var state = { instances: [], selectedId: null };
+  var currentUserId = null;
+  var sb = (window.supabase && window.supabase.createClient)
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
   function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+  function localKey(userId){ return STORE_KEY + "_" + userId; }
 
-  function loadState(){
-    try {
-      var raw = localStorage.getItem(STORE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch(e){}
-    return { instances: [], selectedId: null };
-  }
   function saveState(){
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    if (!currentUserId) return;
+    try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+    cloudSave(currentUserId, state);
+  }
+
+  async function cloudLoad(userId){
+    if (!sb) return null;
+    try {
+      var res = await sb.from("vr_data").select("data").eq("user_id", userId).maybeSingle();
+      if (res.error){ console.error("cloud load error", res.error); return null; }
+      return res.data ? res.data.data : null;
+    } catch(e){ console.error("cloud load failed", e); return null; }
+  }
+  async function cloudSave(userId, stateObj){
+    if (!sb) return;
+    try {
+      var res = await sb.from("vr_data").upsert({ user_id: userId, data: stateObj, updated_at: new Date().toISOString() });
+      if (res.error) console.error("cloud save error", res.error);
+    } catch(e){ console.error("cloud save failed", e); }
+  }
+
+  function setAuthMsg(msg, isError){
+    var el = document.getElementById("authMsg");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.style.color = isError ? "var(--sell)" : "var(--ink-soft)";
+  }
+  function showAuthGate(){
+    document.getElementById("authGate").classList.remove("hidden");
+    document.getElementById("appRoot").classList.add("hidden");
+  }
+  function hideAuthGate(){
+    document.getElementById("authGate").classList.add("hidden");
+    document.getElementById("appRoot").classList.remove("hidden");
+  }
+
+  async function onAuthChange(session){
+    if (session && session.user){
+      currentUserId = session.user.id;
+      document.getElementById("userEmail").textContent = session.user.email || "";
+      var cached = null;
+      try { cached = localStorage.getItem(localKey(currentUserId)); } catch(e){}
+      if (cached){ try { state = JSON.parse(cached); } catch(e){} }
+      hideAuthGate();
+      render();
+
+      var cloud = await cloudLoad(currentUserId);
+      if (cloud){
+        state = cloud;
+        try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+        render();
+      } else {
+        // brand new account on this browser: offer to migrate any pre-login local data
+        var legacy = null;
+        try { legacy = localStorage.getItem(STORE_KEY); } catch(e){}
+        if (legacy){
+          try {
+            var legacyState = JSON.parse(legacy);
+            if (legacyState && legacyState.instances && legacyState.instances.length){
+              if (confirm("이 브라우저에 저장돼 있던 기존 기록이 있어요. 이 계정으로 가져올까요?")){
+                state = legacyState;
+              }
+            }
+          } catch(e){}
+        }
+        saveState();
+        render();
+      }
+    } else {
+      currentUserId = null;
+      state = { instances: [], selectedId: null };
+      showAuthGate();
+    }
+  }
+
+  function wireAuthUI(){
+    var authTab = "login";
+    var tabs = document.querySelectorAll(".auth-tab");
+    var submitBtn = document.getElementById("authSubmit");
+    tabs.forEach(function(btn){
+      btn.addEventListener("click", function(){
+        tabs.forEach(function(b){ b.classList.remove("active"); });
+        btn.classList.add("active");
+        authTab = btn.getAttribute("data-tab");
+        submitBtn.textContent = authTab === "login" ? "로그인" : "회원가입";
+        setAuthMsg("");
+      });
+    });
+    submitBtn.addEventListener("click", async function(){
+      if (!sb){ setAuthMsg("연결에 문제가 있어요. 잠시 후 새로고침해주세요.", true); return; }
+      var email = document.getElementById("auth_email").value.trim();
+      var password = document.getElementById("auth_password").value;
+      if (!email || !password){ setAuthMsg("이메일과 비밀번호를 입력해주세요.", true); return; }
+      submitBtn.disabled = true;
+      setAuthMsg("처리 중...");
+      if (authTab === "signup"){
+        var r1 = await sb.auth.signUp({ email: email, password: password });
+        submitBtn.disabled = false;
+        if (r1.error){ setAuthMsg(r1.error.message, true); return; }
+        if (!r1.data.session){ setAuthMsg("가입 완료! 받으신 이메일의 인증 링크를 눌러주세요."); }
+      } else {
+        var r2 = await sb.auth.signInWithPassword({ email: email, password: password });
+        submitBtn.disabled = false;
+        if (r2.error){ setAuthMsg(r2.error.message, true); return; }
+      }
+    });
+    document.getElementById("logoutBtn").addEventListener("click", async function(){
+      if (sb) await sb.auth.signOut();
+    });
   }
 
   /* ---------------- domain logic ---------------- */
@@ -1086,7 +1242,13 @@
   applyThemeLabel();
 
   /* ---------------- init ---------------- */
-  window.addEventListener("resize", function(){ render(); });
-  render();
+  window.addEventListener("resize", function(){ if (currentUserId) render(); });
+  wireAuthUI();
+  if (sb){
+    sb.auth.onAuthStateChange(function(_event, session){ onAuthChange(session); });
+    sb.auth.getSession().then(function(res){ onAuthChange(res.data.session); });
+  } else {
+    setAuthMsg("연결에 문제가 있어요. 잠시 후 새로고침해주세요.", true);
+  }
 })();
 </script>
