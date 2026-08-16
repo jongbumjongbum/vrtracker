@@ -125,6 +125,30 @@
     .card { padding: 14px 15px !important; }
     .detail-head h2 { font-size: 21px !important; }
     .form-grid { grid-template-columns: 1fr !important; }
+    .stat-strip { grid-template-columns: repeat(2, 1fr) !important; }
+
+    /* Wide data tables become a vertical list of label:value cards instead
+       of something you have to swipe sideways to read. Desktop keeps the
+       normal table layout untouched — this only kicks in under 860px. */
+    table.stack-mobile { border: none; width: 100%; }
+    table.stack-mobile thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    table.stack-mobile, table.stack-mobile tbody { display: block; }
+    table.stack-mobile tr {
+      display: block; border: 1px solid var(--line); border-radius: 10px;
+      padding: 8px 10px; margin-bottom: 8px; background: var(--panel-2);
+    }
+    table.stack-mobile tr:last-child { margin-bottom: 0; }
+    table.stack-mobile td {
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      border: none; padding: 4px 0; text-align: right; white-space: normal;
+    }
+    table.stack-mobile td.num, table.stack-mobile th.num { text-align: right; }
+    table.stack-mobile td::before {
+      content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: 600;
+      text-align: left; flex: 0 0 auto;
+    }
+    table.stack-mobile td:empty, table.stack-mobile td[data-label=""] { display: none; }
+    table.stack-mobile .cell-input { width: auto; max-width: 130px; }
   }
 
   .sidebar {
@@ -1380,11 +1404,11 @@
         profitCell = '<span style="color:' + color + '">' + fmtCurrency(profit) + (pct!=null?(' ('+fmtPct(pct,1)+')'):'') + '</span>' +
           (partial ? ' <span class="footnote" style="display:inline;">*일부물량</span>' : '');
       }
-      return '<tr><td>' + escapeHtml(h.ticker) + '</td><td class="num">' + h.qty +
-        '</td><td class="num">' + priceLabel + '</td><td class="num">' + fmtCurrency(value) + '</td>' +
-        '<td class="num">' + profitCell + '</td></tr>';
+      return '<tr><td data-label="티커">' + escapeHtml(h.ticker) + '</td><td class="num" data-label="수량">' + h.qty +
+        '</td><td class="num" data-label="현재가">' + priceLabel + '</td><td class="num" data-label="평가금">' + fmtCurrency(value) + '</td>' +
+        '<td class="num" data-label="손익(실제평단)">' + profitCell + '</td></tr>';
     }).join("");
-    return '<div class="table-wrap"><table><thead><tr><th>티커</th><th class="num">수량</th>' +
+    return '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>티커</th><th class="num">수량</th>' +
       '<th class="num">현재가</th><th class="num">평가금</th><th class="num">손익(실제평단 기준)</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
       (anyPartial ? '<div class="footnote" style="margin-top:6px;">*일부물량: 같은 티커의 VR 중 실제평단을 입력 안 한 게 있어서, 입력된 수량만큼만 계산했어요.</div>' : '');
   }
@@ -1407,17 +1431,17 @@
         ? ('<div class="num" style="padding:5px 7px;">' + fmtMoney(live) + ' <span class="footnote" style="display:inline;">실시간</span></div>')
         : ('<input type="number" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
       return '<tr data-id="' + h.id + '">' +
-        '<td><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
-        '<td class="num"><input type="number" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
-        '<td class="num"><input type="number" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
-        '<td class="num">' + priceCell + '</td>' +
-        '<td class="num">' + fmtCurrency(value) + '</td>' +
-        '<td class="num" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
-        '<td class="num" style="color:' + profitCls + '">' + (profitPct==null?"–":fmtPct(profitPct,1)) + '</td>' +
+        '<td data-label="티커"><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
+        '<td class="num" data-label="수량"><input type="number" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
+        '<td class="num" data-label="매입평균가"><input type="number" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
+        '<td class="num" data-label="현재가">' + priceCell + '</td>' +
+        '<td class="num" data-label="평가금">' + fmtCurrency(value) + '</td>' +
+        '<td class="num" data-label="수익금" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
+        '<td class="num" data-label="수익률" style="color:' + profitCls + '">' + (profitPct==null?"–":fmtPct(profitPct,1)) + '</td>' +
         '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
         '</tr>';
     }).join("");
-    host.innerHTML = '<div class="table-wrap"><table><thead><tr>' +
+    host.innerHTML = '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
       '<th class="num">평가금</th><th class="num">수익금</th><th class="num">수익률</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
@@ -1545,15 +1569,15 @@
       var cls = type === "매수" ? "signal-buy" : "signal-sell";
       return tranches.map(function(t, i){
         return '<tr>' +
-          '<td>' + (i===0 ? '<span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + type + ' ' + (i+1) + '/' + tranches.length + '</span>' : '<span class="footnote">' + type + ' ' + (i+1) + '/' + tranches.length + '</span>') + '</td>' +
-          '<td class="num" style="text-align:right;">' + fmtMoney(t.price) + '</td>' +
-          '<td class="num" style="text-align:right;">' + t.qty.toLocaleString() + '주</td>' +
-          '<td class="num" style="text-align:right;">' + fmtMoney0(t.qty*t.price) + '</td>' +
+          '<td data-label="구분">' + (i===0 ? '<span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + type + ' ' + (i+1) + '/' + tranches.length + '</span>' : '<span class="footnote">' + type + ' ' + (i+1) + '/' + tranches.length + '</span>') + '</td>' +
+          '<td class="num" data-label="가격" style="text-align:right;">' + fmtMoney(t.price) + '</td>' +
+          '<td class="num" data-label="수량" style="text-align:right;">' + t.qty.toLocaleString() + '주</td>' +
+          '<td class="num" data-label="금액" style="text-align:right;">' + fmtMoney0(t.qty*t.price) + '</td>' +
           '</tr>';
       }).join("");
     }
 
-    return '<div class="table-wrap"><table><thead><tr>' +
+    return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>구분</th><th class="num">가격</th><th class="num">수량</th><th class="num">금액</th>' +
       '</tr></thead><tbody>' + trancheRows("매수", buyTranches) + trancheRows("매도", sellTranches) + '</tbody></table></div>' +
       (note ? ('<div class="footnote" style="margin-top:8px;">' + note + '</div>') : '');
@@ -1567,20 +1591,20 @@
       var sigCls = c.signal === "buy" ? "signal-buy" : (c.signal === "sell" ? "signal-sell" : "signal-hold");
       var sigTxt = c.signal === "buy" ? "매수" : (c.signal === "sell" ? "매도" : "홀드");
       return '<tr>' +
-        '<td>' + fmtDate(c.date) + '</td>' +
-        '<td><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
-        '<td class="num">' + fmtMoney(c.price) + '</td>' +
-        '<td class="num">' + c.qty + '</td>' +
-        '<td class="num">' + fmtMoney0(c.E) + '</td>' +
-        '<td class="num">' + fmtMoney0(c.deposit) + '</td>' +
-        '<td class="num">' + c.G + '</td>' +
-        '<td class="num">' + fmtMoney0(c.Vnext) + '</td>' +
-        '<td class="num">' + fmtMoney0(c.buyBandNext) + '</td>' +
-        '<td class="num">' + fmtMoney0(c.sellBandNext) + '</td>' +
-        '<td class="num">' + fmtMoney0(c.Pool) + '</td>' +
+        '<td data-label="날짜">' + fmtDate(c.date) + '</td>' +
+        '<td data-label="신호"><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
+        '<td class="num" data-label="가격">' + fmtMoney(c.price) + '</td>' +
+        '<td class="num" data-label="수량">' + c.qty + '</td>' +
+        '<td class="num" data-label="평가금 E">' + fmtMoney0(c.E) + '</td>' +
+        '<td class="num" data-label="적립/인출">' + fmtMoney0(c.deposit) + '</td>' +
+        '<td class="num" data-label="G">' + c.G + '</td>' +
+        '<td class="num" data-label="V">' + fmtMoney0(c.Vnext) + '</td>' +
+        '<td class="num" data-label="다음매수↓">' + fmtMoney0(c.buyBandNext) + '</td>' +
+        '<td class="num" data-label="다음매도↑">' + fmtMoney0(c.sellBandNext) + '</td>' +
+        '<td class="num" data-label="Pool">' + fmtMoney0(c.Pool) + '</td>' +
         '</tr>';
     }).join("");
-    return '<div class="table-wrap"><table><thead><tr>' +
+    return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>날짜</th><th>신호</th><th class="num">가격</th><th class="num">수량</th><th class="num">평가금 E</th>' +
       '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
