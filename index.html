@@ -412,6 +412,30 @@
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="poolLimitModal">
+  <div class="modal">
+    <h3>Pool 매수한도 설정</h3>
+    <p class="footnote" style="margin-bottom:12px;">사이클마다 Pool 중 최대 몇 %까지 매수에 쓸지 정하는 설정이에요. 지금 바로 바꿔도 되고, 나중에 운용하면서 언제든 다시 열어서 바꿀 수 있어요.</p>
+    <div class="type-switch-options" id="plModeOptions">
+      <label class="type-opt"><span>시간이 지나며 점점 감소</span><input type="radio" name="plMode" value="schedule" /></label>
+      <label class="type-opt"><span>고정 비율 유지</span><input type="radio" name="plMode" value="fixed" /></label>
+    </div>
+    <div id="plScheduleFields" class="form-grid" style="grid-template-columns:1fr 1fr;">
+      <div class="field"><label>시작 한도 (%)</label><input id="pl_base" type="number" step="1" /></div>
+      <div class="field"><label>감소폭 (%)</label><input id="pl_step" type="number" step="1" /></div>
+      <div class="field"><label>감소 주기 (일)</label><input id="pl_stepdays" type="number" step="1" /></div>
+      <div class="field"><label>최소 한도 (%)</label><input id="pl_floor" type="number" step="1" /></div>
+    </div>
+    <div id="plFixedFields" class="form-grid hidden" style="grid-template-columns:1fr;">
+      <div class="field"><label>고정 매수한도 (%)</label><input id="pl_fixed" type="number" step="1" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="pl_cancel" type="button">취소</button>
+      <button class="btn btn-primary" id="pl_save" type="button">저장</button>
+    </div>
+  </div>
+</div>
+
 <div class="auth-gate" id="authGate">
   <div class="auth-box">
     <div>
@@ -596,15 +620,23 @@
     return { date: d, nextG: seg.startG + steps + 1 };
   }
 
+  // The Pool buy-limit ratio is user-editable (both at creation and later),
+  // so this is only the fallback shown/pre-filled when an instance hasn't
+  // customized it yet.
+  function defaultPoolLimitConfig(type){
+    if (type === "인출식") return { mode: "fixed", fixedPct: 10, basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 10 };
+    return { mode: "schedule", basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 10, fixedPct: 10 };
+  }
+
   function currentPoolLimit(inst, atDate){
     var seg = currentSegment(inst, atDate);
-    var def = TYPE_DEFAULTS[seg.type];
-    if (seg.type === "인출식"){
-      return { buyPct: def.buyLimitPct, sellPct: null };
+    var cfg = inst.poolLimitConfig || defaultPoolLimitConfig(seg.type);
+    if (cfg.mode === "fixed"){
+      return { buyPct: cfg.fixedPct, sellPct: null };
     }
     var days = Math.max(0, daysBetween(seg.startDate, atDate));
-    var steps = Math.floor(days / def.poolStepDays);
-    var pct = Math.max(def.poolFloor, def.poolBase - steps*def.poolStepPct);
+    var steps = Math.floor(days / cfg.stepDays);
+    var pct = Math.max(cfg.floorPct, cfg.basePct - steps*cfg.stepPct);
     return { buyPct: pct, sellPct: null };
   }
 
@@ -864,6 +896,7 @@
           ' · Pool 매수한도 ' + limit.buyPct.toFixed(0) + '% · 다음 G 증가 ' + fmtDate(nextG.date) + '(G→' + nextG.nextG + ')' +
         '</div></div>' +
         '<div class="head-actions">' +
+          '<button class="btn btn-sm" id="poolLimitBtn" type="button">Pool 한도 설정</button>' +
           '<button class="btn btn-sm" id="switchTypeBtn" type="button">운용방식 전환</button>' +
           '<button class="btn btn-sm btn-ghost btn-danger" id="deleteInstBtn" type="button">삭제</button>' +
         '</div>' +
@@ -973,6 +1006,7 @@
     mainArea.appendChild(histCard);
 
     // wire events
+    document.getElementById("poolLimitBtn").addEventListener("click", function(){ openPoolLimitModal(inst); });
     document.getElementById("switchTypeBtn").addEventListener("click", function(){ openSwitchTypeModal(inst); });
     document.getElementById("deleteInstBtn").addEventListener("click", function(){
       if (confirm(inst.name + "을(를) 삭제할까요? 되돌릴 수 없어요.")){
@@ -1271,28 +1305,21 @@
   // totalDollars regardless of how the price path actually unfolds, and
   // naturally buys more shares at the cheaper tranches. Quantities are
   // always whole shares.
-  function buildLadder(totalDollars, priceStart, priceEnd, maxN, qtyCap){
-    totalDollars = Math.max(0, totalDollars);
-    if (totalDollars <= 0 || !(priceStart > 0) || !(priceEnd > 0)) return [];
-    var n = (priceStart === priceEnd) ? 1 : Math.max(1, maxN);
-    var dollarPer = totalDollars / n;
+  // Splits a total whole-share quantity evenly across up to `maxN` limit-order
+  // tranches at linearly-spaced prices from priceStart (near today's price) to
+  // priceEnd (the exact band price). Every tranche gets the same share count
+  // except possibly the last, which absorbs the remainder.
+  function buildLadder(totalQty, priceStart, priceEnd, maxN){
+    totalQty = Math.floor(Math.max(0, totalQty));
+    if (totalQty <= 0 || !(priceStart > 0) || !(priceEnd > 0)) return [];
+    var n = (priceStart === priceEnd) ? 1 : Math.max(1, Math.min(maxN, totalQty));
+    var base = Math.floor(totalQty / n);
+    var remainder = totalQty - base * n;
     var tranches = [];
     for (var i=0; i<n; i++){
       var priceI = priceStart + (priceEnd - priceStart) * (i+1)/n;
-      var qtyI = Math.floor(dollarPer / priceI);
+      var qtyI = base + (i === n-1 ? remainder : 0);
       if (qtyI > 0) tranches.push({ price: round2(priceI), qty: qtyI });
-    }
-    if (tranches.length === 0){
-      var q1 = Math.floor(totalDollars / priceEnd);
-      if (q1 > 0) tranches = [{ price: round2(priceEnd), qty: q1 }];
-    }
-    if (qtyCap != null){
-      var sum = tranches.reduce(function(s,t){ return s + t.qty; }, 0);
-      if (sum > qtyCap){
-        var scale = qtyCap / sum;
-        tranches.forEach(function(t){ t.qty = Math.floor(t.qty * scale); });
-        tranches = tranches.filter(function(t){ return t.qty > 0; });
-      }
     }
     return tranches;
   }
@@ -1310,17 +1337,17 @@
     if (qty > 0){
       var buyPrice = buyBand / qty;
       var sellPrice = sellBand / qty;
-      var buyDollars = Math.min(Math.max(0, V - buyBand), buyLimitAmt);
-      var sellDollars = Math.max(0, sellBand - V);
+      var buyQtyTotal = Math.floor(Math.min(Math.max(0, (V - buyBand) / buyPrice), buyLimitAmt / buyPrice));
+      var sellQtyTotal = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPrice), qty));
       var buyStart = (refNow != null && refNow > buyPrice) ? refNow : buyPrice;
       var sellStart = (refNow != null && refNow < sellPrice) ? refNow : sellPrice;
-      buyTranches = buildLadder(buyDollars, buyStart, buyPrice, MAX_LADDER_TRANCHES, null);
-      sellTranches = buildLadder(sellDollars, sellStart, sellPrice, MAX_LADDER_TRANCHES, Math.floor(qty));
+      buyTranches = buildLadder(buyQtyTotal, buyStart, buyPrice, MAX_LADDER_TRANCHES);
+      sellTranches = buildLadder(sellQtyTotal, sellStart, sellPrice, MAX_LADDER_TRANCHES);
       if ((V - buyBand) > buyLimitAmt + 0.01) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 금액보다 적게 매수돼요.';
     } else {
       var refPrice = refNow || inst.initPrice || 0;
       if (refPrice > 0){
-        buyTranches = buildLadder(buyLimitAmt, refPrice, refPrice, 1, null);
+        buyTranches = buildLadder(Math.floor(buyLimitAmt/refPrice), refPrice, refPrice, 1);
         note = '보유수량 0 — 이번엔 가격 상관없이 무조건 매수예요.';
       }
     }
@@ -1650,6 +1677,7 @@
       goalAmount: isNaN(goal) ? null : goal,
       band: { low: 1 - bandPct/100, high: 1 + bandPct/100 },
       typeSegments: [ { type: type, startDate: date, startG: g } ],
+      poolLimitConfig: defaultPoolLimitConfig(type),
       cycles: []
     };
     state.instances.push(inst);
@@ -1692,6 +1720,48 @@
     switchTargetInst.typeSegments.sort(function(a,b){ return new Date(a.startDate)-new Date(b.startDate); });
     saveState();
     switchModal.classList.add("hidden");
+    render();
+  });
+
+  var poolLimitModal = document.getElementById("poolLimitModal");
+  var poolLimitTargetInst = null;
+  function setPoolLimitMode(mode){
+    Array.prototype.forEach.call(poolLimitModal.querySelectorAll(".type-opt"), function(el){
+      var isMatch = el.querySelector("input").value === mode;
+      el.classList.toggle("selected", isMatch);
+      el.querySelector("input").checked = isMatch;
+    });
+    document.getElementById("plScheduleFields").classList.toggle("hidden", mode !== "schedule");
+    document.getElementById("plFixedFields").classList.toggle("hidden", mode !== "fixed");
+  }
+  function openPoolLimitModal(inst){
+    poolLimitTargetInst = inst;
+    var seg = currentSegment(inst, todayStr());
+    var cfg = inst.poolLimitConfig || defaultPoolLimitConfig(seg.type);
+    document.getElementById("pl_base").value = cfg.basePct;
+    document.getElementById("pl_step").value = cfg.stepPct;
+    document.getElementById("pl_stepdays").value = cfg.stepDays;
+    document.getElementById("pl_floor").value = cfg.floorPct;
+    document.getElementById("pl_fixed").value = cfg.fixedPct;
+    setPoolLimitMode(cfg.mode);
+    poolLimitModal.classList.remove("hidden");
+  }
+  Array.prototype.forEach.call(poolLimitModal.querySelectorAll(".type-opt"), function(el){
+    el.addEventListener("click", function(){ setPoolLimitMode(el.querySelector("input").value); });
+  });
+  document.getElementById("pl_cancel").addEventListener("click", function(){ poolLimitModal.classList.add("hidden"); });
+  document.getElementById("pl_save").addEventListener("click", function(){
+    var mode = document.querySelector('input[name="plMode"]:checked').value;
+    poolLimitTargetInst.poolLimitConfig = {
+      mode: mode,
+      basePct: parseFloat(document.getElementById("pl_base").value) || 75,
+      stepPct: parseFloat(document.getElementById("pl_step").value) || 5,
+      stepDays: parseFloat(document.getElementById("pl_stepdays").value) || 182.5,
+      floorPct: parseFloat(document.getElementById("pl_floor").value) || 10,
+      fixedPct: parseFloat(document.getElementById("pl_fixed").value) || 10
+    };
+    saveState();
+    poolLimitModal.classList.add("hidden");
     render();
   });
 
