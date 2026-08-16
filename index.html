@@ -341,6 +341,10 @@
   }
   .user-badge .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .user-badge button { font-size: 11px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
+  #adminApprovalBtn { width: 100%; margin-top: 4px; }
+  .approval-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .approval-row:last-child { border-bottom: none; }
+  .approval-row .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .mode-switch, .currency-toggle { display: flex; gap: 4px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
   .mode-switch button, .currency-toggle button {
@@ -377,6 +381,7 @@
       <span class="email" id="userEmail"></span>
       <button type="button" id="logoutBtn">로그아웃</button>
     </div>
+    <button class="btn btn-ghost hidden" id="adminApprovalBtn" type="button">승인 대기 확인</button>
 
     <div class="mode-switch" id="modeSwitch">
       <button type="button" data-mode="vr" class="active">VR</button>
@@ -580,6 +585,26 @@
   </div>
 </div>
 
+<div class="auth-gate hidden" id="pendingGate">
+  <div class="auth-box">
+    <div>
+      <h1>승인 대기 중</h1>
+      <div class="tag">관리자가 가입을 승인하면 바로 이용하실 수 있어요.</div>
+    </div>
+    <button class="btn btn-ghost btn-block" id="pendingLogoutBtn" type="button">로그아웃</button>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="approvalModal">
+  <div class="modal">
+    <h3>가입 승인</h3>
+    <div id="approvalList"><div class="footnote">불러오는 중...</div></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="approvalCloseBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 (function(){
@@ -588,6 +613,7 @@
   /* ---------------- auth + state ---------------- */
   var SUPABASE_URL = "https://pnzvidgoedgcvwfueaiu.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_g9dpeyGzjC7dH3gSxOisWA_4Dc6bgxk";
+  var ADMIN_EMAIL = "ljb901220@gmail.com";
   var STORE_KEY = "vr_tracker_state_v1";
   var state = { instances: [], selectedId: null };
   var currentUserId = null;
@@ -628,17 +654,117 @@
   }
   function showAuthGate(){
     document.getElementById("authGate").classList.remove("hidden");
+    document.getElementById("pendingGate").classList.add("hidden");
+    document.getElementById("appRoot").classList.add("hidden");
+    document.getElementById("adminApprovalBtn").classList.add("hidden");
+  }
+  function showPendingGate(){
+    document.getElementById("authGate").classList.add("hidden");
+    document.getElementById("pendingGate").classList.remove("hidden");
     document.getElementById("appRoot").classList.add("hidden");
   }
   function hideAuthGate(){
     document.getElementById("authGate").classList.add("hidden");
+    document.getElementById("pendingGate").classList.add("hidden");
     document.getElementById("appRoot").classList.remove("hidden");
+  }
+
+  function isAdminEmail(email){
+    return !!email && email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  }
+  async function ensureProfile(userId, email){
+    if (!sb) return;
+    try {
+      var res = await sb.from("profiles").upsert(
+        { id: userId, email: email },
+        { onConflict: "id", ignoreDuplicates: true }
+      );
+      if (res.error) console.error("ensureProfile error", res.error);
+    } catch(e){ console.error("ensureProfile failed", e); }
+  }
+  async function fetchMyApproval(userId){
+    if (!sb) return false;
+    try {
+      var res = await sb.from("profiles").select("approved").eq("id", userId).maybeSingle();
+      if (res.error){ console.error("fetchMyApproval error", res.error); return false; }
+      return !!(res.data && res.data.approved);
+    } catch(e){ console.error("fetchMyApproval failed", e); return false; }
+  }
+
+  async function refreshPendingCount(){
+    if (!sb) return;
+    var btn = document.getElementById("adminApprovalBtn");
+    try {
+      var res = await sb.from("profiles").select("id", { count: "exact", head: true }).eq("approved", false).neq("email", ADMIN_EMAIL);
+      var count = res.count || 0;
+      btn.textContent = count > 0 ? ("승인 대기 " + count + "명") : "승인 대기 없음";
+    } catch(e){ console.error("refreshPendingCount failed", e); }
+  }
+  async function openApprovalModal(){
+    var modal = document.getElementById("approvalModal");
+    var list = document.getElementById("approvalList");
+    modal.classList.remove("hidden");
+    list.innerHTML = "<div class=\"footnote\">불러오는 중...</div>";
+    try {
+      var res = await sb.from("profiles").select("id, email, created_at").eq("approved", false).neq("email", ADMIN_EMAIL).order("created_at", { ascending: true });
+      if (res.error){ list.innerHTML = "<div class=\"footnote\">목록을 불러오지 못했어요.</div>"; return; }
+      var rows = res.data || [];
+      if (!rows.length){ list.innerHTML = "<div class=\"footnote\">승인 대기 중인 신청이 없어요.</div>"; return; }
+      list.innerHTML = "";
+      rows.forEach(function(row){
+        var item = document.createElement("div");
+        item.className = "approval-row";
+        var span = document.createElement("span");
+        span.className = "email";
+        span.textContent = row.email || row.id;
+        var btn = document.createElement("button");
+        btn.className = "btn btn-primary";
+        btn.type = "button";
+        btn.textContent = "승인";
+        btn.addEventListener("click", async function(){
+          btn.disabled = true;
+          btn.textContent = "승인 중...";
+          var upd = await sb.from("profiles").update({ approved: true }).eq("id", row.id);
+          if (upd.error){ alert("승인 실패: " + upd.error.message); btn.disabled = false; btn.textContent = "승인"; return; }
+          item.remove();
+          refreshPendingCount();
+          if (!list.children.length) list.innerHTML = "<div class=\"footnote\">승인 대기 중인 신청이 없어요.</div>";
+        });
+        item.appendChild(span);
+        item.appendChild(btn);
+        list.appendChild(item);
+      });
+    } catch(e){ list.innerHTML = "<div class=\"footnote\">목록을 불러오지 못했어요.</div>"; }
+  }
+  function showAdminApprovalUI(){
+    document.getElementById("adminApprovalBtn").classList.remove("hidden");
+    refreshPendingCount();
+  }
+  function wireApprovalUI(){
+    document.getElementById("adminApprovalBtn").addEventListener("click", openApprovalModal);
+    document.getElementById("approvalCloseBtn").addEventListener("click", function(){
+      document.getElementById("approvalModal").classList.add("hidden");
+    });
+    document.getElementById("pendingLogoutBtn").addEventListener("click", async function(){
+      if (sb) await sb.auth.signOut();
+    });
   }
 
   async function onAuthChange(session){
     if (session && session.user){
       currentUserId = session.user.id;
-      document.getElementById("userEmail").textContent = session.user.email || "";
+      var userEmail = session.user.email || "";
+      document.getElementById("userEmail").textContent = userEmail;
+
+      await ensureProfile(currentUserId, userEmail);
+      var admin = isAdminEmail(userEmail);
+      var approved = admin ? true : await fetchMyApproval(currentUserId);
+      if (!approved){
+        showPendingGate();
+        return;
+      }
+      if (admin) showAdminApprovalUI();
+
       var cached = null;
       try { cached = localStorage.getItem(localKey(currentUserId)); } catch(e){}
       if (cached){ try { state = JSON.parse(cached); } catch(e){} }
@@ -3169,6 +3295,7 @@
   /* ---------------- init ---------------- */
   window.addEventListener("resize", function(){ if (currentUserId) render(); });
   wireAuthUI();
+  wireApprovalUI();
   if (sb){
     sb.auth.onAuthStateChange(function(_event, session){ onAuthChange(session); });
     sb.auth.getSession().then(function(res){ onAuthChange(res.data.session); });
