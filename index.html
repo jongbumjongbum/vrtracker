@@ -703,6 +703,44 @@
     } catch(e){ console.error("fx fetch failed", e); }
   }
 
+  var TWELVEDATA_KEY = "9d7a1fad48604a07874cb77f737f3557";
+  var LIVE_PRICE_CACHE = {};
+  var LIVE_PRICE_TTL_MS = 5*60*1000;
+
+  function getLivePrice(ticker){
+    var c = LIVE_PRICE_CACHE[ticker];
+    return c ? c.price : null;
+  }
+
+  async function fetchLivePrices(tickers){
+    var now = Date.now();
+    var uniq = [];
+    tickers.forEach(function(t){ if (t && uniq.indexOf(t)===-1) uniq.push(t); });
+    var need = uniq.filter(function(t){
+      var c = LIVE_PRICE_CACHE[t];
+      return !c || (now - c.ts) > LIVE_PRICE_TTL_MS;
+    });
+    if (!need.length) return false;
+    try {
+      var url = "https://api.twelvedata.com/price?symbol=" + encodeURIComponent(need.join(",")) + "&apikey=" + TWELVEDATA_KEY;
+      var res = await fetch(url);
+      var json = await res.json();
+      if (need.length === 1){
+        if (json && json.price && !isNaN(parseFloat(json.price))){
+          LIVE_PRICE_CACHE[need[0]] = { price: parseFloat(json.price), ts: now };
+        }
+      } else {
+        need.forEach(function(t){
+          var entry = json[t];
+          if (entry && entry.price && !isNaN(parseFloat(entry.price))){
+            LIVE_PRICE_CACHE[t] = { price: parseFloat(entry.price), ts: now };
+          }
+        });
+      }
+      return true;
+    } catch(e){ console.error("live price fetch failed", e); return false; }
+  }
+
   function fmtCurrency(usdAmount){
     if (usdAmount == null || isNaN(usdAmount)) return "–";
     if (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw){
@@ -908,11 +946,26 @@
 
   function renderPortfolio(){
     var vrHoldings = aggregateVrHoldingsByTicker();
-    var vrTotal = vrHoldings.reduce(function(s,h){ return s + h.value; }, 0);
     var manual = state.portfolio.holdings;
+
+    var allTickers = [];
+    vrHoldings.forEach(function(h){ if (allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
+    manual.forEach(function(h){ if (h.ticker && allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
+    fetchLivePrices(allTickers).then(function(changed){
+      if (changed && state.viewMode === "portfolio") renderMain();
+    });
+
+    var vrTotal = 0;
+    vrHoldings.forEach(function(h){
+      var live = getLivePrice(h.ticker);
+      var price = live != null ? live : (h.qty ? h.value/h.qty : 0);
+      vrTotal += h.qty * price;
+    });
     var manualValueTotal = 0, manualCostTotal = 0;
     manual.forEach(function(h){
-      manualValueTotal += (h.qty||0) * (h.currentPrice||0);
+      var live = h.ticker ? getLivePrice(h.ticker) : null;
+      var price = live != null ? live : (h.currentPrice||0);
+      manualValueTotal += (h.qty||0) * price;
       manualCostTotal += (h.qty||0) * (h.avgCost||0);
     });
     var manualProfit = manualValueTotal - manualCostTotal;
@@ -922,13 +975,14 @@
     var head = document.createElement("div");
     head.innerHTML =
       '<div class="detail-head">' +
-        '<div><h2>전체 포트폴리오</h2><div class="sub">VR 보유종목 자동 반영 + 직접 추가한 종목</div></div>' +
+        '<div><h2>전체 포트폴리오</h2><div class="sub">VR 보유종목 자동 반영 + 직접 추가한 종목 · 실시간 시세 (Twelve Data)</div></div>' +
         '<div class="head-actions">' +
           '<div class="currency-toggle" id="curToggle">' +
             '<button type="button" data-cur="USD" class="' + (state.portfolioCurrency==="USD"?"active":"") + '">USD</button>' +
             '<button type="button" data-cur="KRW" class="' + (state.portfolioCurrency==="KRW"?"active":"") + '">KRW</button>' +
           '</div>' +
           '<button class="btn btn-sm" id="fxRefreshBtn" type="button">환율 새로고침</button>' +
+          '<button class="btn btn-sm" id="priceRefreshBtn" type="button">시세 새로고침</button>' +
         '</div>' +
       '</div>';
     mainArea.appendChild(head);
@@ -955,14 +1009,14 @@
     var vrCard = document.createElement("div");
     vrCard.className = "card";
     vrCard.innerHTML = "<h3>VR 운용 중인 종목 (자동 반영)</h3>" +
-      '<div class="card-desc">모든 VR 기수의 현재 보유수량을 티커별로 합산했어요. 따로 입력할 필요 없어요. VR 구조상 매입원가 개념이 명확하지 않아 수익률은 표시하지 않아요.</div>' +
+      '<div class="card-desc">모든 VR 기수의 현재 보유수량을 티커별로 합산했어요. 따로 입력할 필요 없어요. 시세는 실시간, 매입원가는 VR 구조상 명확하지 않아 수익률은 표시하지 않아요.</div>' +
       renderVrHoldingsTable(vrHoldings);
     mainArea.appendChild(vrCard);
 
     var manCard = document.createElement("div");
     manCard.className = "card";
     manCard.innerHTML = "<h3>직접 추가한 종목</h3>" +
-      '<div class="card-desc">VR로 운용하지 않는 다른 주식을 여기에 추가하고, 확인할 때마다 현재가를 업데이트해주세요.</div>' +
+      '<div class="card-desc">VR로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.</div>' +
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>';
     mainArea.appendChild(manCard);
@@ -976,6 +1030,10 @@
       });
     });
     document.getElementById("fxRefreshBtn").addEventListener("click", function(){ fetchFxRate(true); });
+    document.getElementById("priceRefreshBtn").addEventListener("click", function(){
+      allTickers.forEach(function(t){ delete LIVE_PRICE_CACHE[t]; });
+      renderMain();
+    });
     document.getElementById("addHoldingBtn").addEventListener("click", function(){
       state.portfolio.holdings.push({ id: uid(), ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
       saveState();
@@ -986,12 +1044,16 @@
   function renderVrHoldingsTable(vrHoldings){
     if (!vrHoldings.length) return '<div class="chart-empty">아직 VR에 보유수량이 없어요.</div>';
     var rows = vrHoldings.map(function(h){
-      var avg = h.qty ? h.value/h.qty : 0;
+      var live = getLivePrice(h.ticker);
+      var fallbackAvg = h.qty ? h.value/h.qty : 0;
+      var price = live != null ? live : fallbackAvg;
+      var value = h.qty * price;
+      var priceLabel = fmtCurrency(price) + (live != null ? ' <span class="footnote" style="display:inline;">실시간</span>' : ' <span class="footnote" style="display:inline;">마지막 사이클 기준</span>');
       return '<tr><td>' + escapeHtml(h.ticker) + '</td><td class="num">' + h.qty +
-        '</td><td class="num">' + fmtCurrency(avg) + '</td><td class="num">' + fmtCurrency(h.value) + '</td></tr>';
+        '</td><td class="num">' + priceLabel + '</td><td class="num">' + fmtCurrency(value) + '</td></tr>';
     }).join("");
     return '<div class="table-wrap"><table><thead><tr><th>티커</th><th class="num">수량</th>' +
-      '<th class="num">평균단가</th><th class="num">평가금</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<th class="num">현재가</th><th class="num">평가금</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function renderManualHoldingsTable(host){
@@ -1001,16 +1063,21 @@
       return;
     }
     var rows = holdings.map(function(h){
-      var value = (h.qty||0) * (h.currentPrice||0);
+      var live = h.ticker ? getLivePrice(h.ticker) : null;
+      var effPrice = live != null ? live : (h.currentPrice||0);
+      var value = (h.qty||0) * effPrice;
       var cost = (h.qty||0) * (h.avgCost||0);
       var profit = value - cost;
       var profitPct = cost > 0 ? (profit/cost*100) : null;
       var profitCls = profit > 0 ? "var(--buy)" : (profit < 0 ? "var(--sell)" : "var(--ink-soft)");
+      var priceCell = live != null
+        ? ('<div class="num" style="padding:5px 7px;">' + fmtMoney(live) + ' <span class="footnote" style="display:inline;">실시간</span></div>')
+        : ('<input type="number" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
       return '<tr data-id="' + h.id + '">' +
         '<td><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
         '<td class="num"><input type="number" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
         '<td class="num"><input type="number" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
-        '<td class="num"><input type="number" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" /></td>' +
+        '<td class="num">' + priceCell + '</td>' +
         '<td class="num">' + fmtCurrency(value) + '</td>' +
         '<td class="num" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
         '<td class="num" style="color:' + profitCls + '">' + (profitPct==null?"–":fmtPct(profitPct,1)) + '</td>' +
@@ -1025,11 +1092,14 @@
     Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
       var id = tr.getAttribute("data-id");
       var h = holdings.find(function(x){ return x.id === id; });
-      function commit(){ saveState(); renderManualHoldingsTable(host); }
+      function commit(){ saveState(); renderMain(); }
       tr.querySelector(".h-ticker").addEventListener("change", function(){ h.ticker = this.value.trim().toUpperCase(); commit(); });
       tr.querySelector(".h-qty").addEventListener("change", function(){ h.qty = parseFloat(this.value)||0; commit(); });
       tr.querySelector(".h-cost").addEventListener("change", function(){ h.avgCost = parseFloat(this.value)||0; commit(); });
-      tr.querySelector(".h-price").addEventListener("change", function(){ h.currentPrice = parseFloat(this.value)||0; commit(); });
+      var priceInput = tr.querySelector(".h-price");
+      if (priceInput){
+        priceInput.addEventListener("change", function(){ h.currentPrice = parseFloat(this.value)||0; commit(); });
+      }
       tr.querySelector(".h-del").addEventListener("click", function(){
         state.portfolio.holdings = state.portfolio.holdings.filter(function(x){ return x.id !== id; });
         saveState();
