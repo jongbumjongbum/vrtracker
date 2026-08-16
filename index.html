@@ -804,6 +804,17 @@
       return !c || (now - c.ts) > LIVE_PRICE_TTL_MS;
     });
     if (!need.length) return false;
+    var changed = false;
+    // Always stamp every requested ticker with "ts: now" below, success or
+    // failure — that's what stops a failed call (rate limit, bad symbol,
+    // network hiccup) from being retried on every single render. Previously
+    // a failed fetch left the ticker uncached, so the next render saw it as
+    // still "needed", fetched again, failed again, forever — this is what
+    // burned through the whole day's API quota in one sitting.
+    function markFailed(t){
+      var prev = LIVE_PRICE_CACHE[t];
+      LIVE_PRICE_CACHE[t] = { price: prev ? prev.price : null, ts: now, failed: true };
+    }
     try {
       var url = "https://api.twelvedata.com/price?symbol=" + encodeURIComponent(need.join(",")) + "&apikey=" + TWELVEDATA_KEY;
       var res = await fetch(url);
@@ -811,17 +822,26 @@
       if (need.length === 1){
         if (json && json.price && !isNaN(parseFloat(json.price))){
           LIVE_PRICE_CACHE[need[0]] = { price: parseFloat(json.price), ts: now };
+          changed = true;
+        } else {
+          markFailed(need[0]);
         }
       } else {
         need.forEach(function(t){
           var entry = json[t];
           if (entry && entry.price && !isNaN(parseFloat(entry.price))){
             LIVE_PRICE_CACHE[t] = { price: parseFloat(entry.price), ts: now };
+            changed = true;
+          } else {
+            markFailed(t);
           }
         });
       }
-      return true;
-    } catch(e){ console.error("live price fetch failed", e); return false; }
+    } catch(e){
+      console.error("live price fetch failed", e);
+      need.forEach(markFailed);
+    }
+    return changed;
   }
 
   function fmtCurrency(usdAmount){
