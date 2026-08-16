@@ -899,7 +899,7 @@
     if (seg.gApprovedSteps === undefined || seg.gApprovedSteps === null){
       seg.gApprovedSteps = elapsedSteps;
     }
-    var approvedSteps = Math.min(seg.gApprovedSteps, elapsedSteps);
+    var approvedSteps = seg.gApprovedSteps;
     var G = seg.startG + approvedSteps;
     var due = elapsedSteps > approvedSteps;
     // "나중에"로 미루면 다음 사이클을 입력하기 전까지는 배너를 다시 보여주지 않는다.
@@ -1493,7 +1493,8 @@
       stat("현재 V (기준값)", fmtMoney0(last.Vnext)) +
       stat("평가금 E", fmtMoney0(refE)) +
       stat("Pool (현금)", fmtMoney0(last.Pool)) +
-      stat("G값", G, true) +
+      '<div class="stat"><div class="label">G값 (직접 수정 가능)</div>' +
+        '<input id="gManualInput" type="number" step="1" class="cell-input" style="width:100%;" value="' + G + '" /></div>' +
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
       stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
       stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
@@ -1510,6 +1511,15 @@
       var v = parseFloat(this.value);
       inst.realAvgCost = isNaN(v) ? null : v;
       inst.realAvgCostQty = isNaN(v) ? null : last.qty;
+      saveState();
+      render();
+    });
+
+    document.getElementById("gManualInput").addEventListener("change", function(){
+      var v = parseFloat(this.value);
+      if (isNaN(v)){ this.value = G; return; }
+      gs.seg.gApprovedSteps = v - gs.seg.startG;
+      gs.seg.gDeferred = false;
       saveState();
       render();
     });
