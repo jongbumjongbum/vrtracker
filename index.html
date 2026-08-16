@@ -730,17 +730,29 @@
     return { buyPct: pct, sellPct: null };
   }
 
+  // A cycle can contain zero or more fills ({type:"buy"|"sell", qty, price}) —
+  // e.g. several ladder rungs filled at different prices, or a buy and a sell
+  // in the same check-in. Each fill's own price drives the cash math exactly
+  // (no more approximating the whole cycle's cash flow with one price), while
+  // `closePrice` alone values the resulting position for E.
   function computeCycle(inst, prevCycleOrInit, input){
-    // input: {date, price, qty, deposit, spy, qqq}
+    // input: {date, closePrice, fills:[{type,qty,price}], deposit, spy, qqq}
     var Vprev = prevCycleOrInit.Vnext;
     var Poolprev = prevCycleOrInit.Pool;
     var Qprev = prevCycleOrInit.qty;
     var G = currentG(inst, input.date);
-    var E = round2(input.qty * input.price);
+    var fills = input.fills || [];
+    var buyQty = 0, buyCost = 0, sellQty = 0, sellProceeds = 0;
+    fills.forEach(function(f){
+      if (f.type === "buy"){ buyQty += f.qty; buyCost += f.qty*f.price; }
+      else { sellQty += f.qty; sellProceeds += f.qty*f.price; }
+    });
+    var deltaQty = buyQty - sellQty;
+    var tradeCash = sellProceeds - buyCost;
+    var qtyEnd = Qprev + deltaQty;
+    var E = round2(qtyEnd * input.closePrice);
     var raw = Vprev + (Poolprev / G) + ((E - Vprev) / (2 * Math.sqrt(G)));
     var Vnext = round2(raw) + Number(input.deposit || 0);
-    var deltaQty = input.qty - Qprev;
-    var tradeCash = -(deltaQty * input.price);
     var Pool = round2(Poolprev + Number(input.deposit || 0) + tradeCash);
     var band = inst.band || {low:0.85, high:1.15};
     var buyBandPrev = round2(Vprev * band.low);
@@ -753,7 +765,8 @@
     var sellBandNext = round2(Vnext * band.high);
     var buyLimitAmt = round2(Pool * (limit.buyPct/100));
     return {
-      id: uid(), date: input.date, price: input.price, qty: input.qty, E: E,
+      id: uid(), date: input.date, price: input.closePrice, qty: qtyEnd, E: E,
+      fills: fills.map(function(f){ return { type: f.type, qty: f.qty, price: f.price }; }),
       deposit: Number(input.deposit||0), G: G, Vprev: Vprev, Vnext: Vnext,
       Pool: Pool, PoolPrev: Poolprev, deltaQty: deltaQty, tradeCash: tradeCash,
       buyBandPrev: buyBandPrev, sellBandPrev: sellBandPrev, signal: signal,
@@ -802,22 +815,32 @@
   // Reference-only running weighted-average cost, derived purely from recorded
   // cycle fills. Not used anywhere in the VR formula itself (V/Pool/G/E don't
   // need it) — it's just for showing an approximate profit/return alongside.
+  // Cycles recorded before multi-fill support only have a single net
+  // deltaQty/price — synthesize an equivalent single fill so old data still
+  // walks through computeEffectiveCostBasis the same way.
+  function legacyFillsFromCycle(c){
+    var dq = c.deltaQty || 0;
+    if (!dq) return [];
+    return [{ type: dq > 0 ? "buy" : "sell", qty: Math.abs(dq), price: c.price }];
+  }
   function computeEffectiveCostBasis(inst){
     var qty = inst.initQty || 0;
     var cost = qty * (inst.initPrice || 0);
     var realizedPL = 0;
     inst.cycles.forEach(function(c){
-      var dq = c.deltaQty || 0;
-      if (dq > 0){
-        cost += dq * c.price;
-        qty += dq;
-      } else if (dq < 0 && qty > 0){
-        var avg = cost / qty;
-        var sellQty = Math.min(-dq, qty);
-        realizedPL += sellQty * (c.price - avg);
-        qty += dq;
-        cost = avg * Math.max(0, qty);
-      }
+      var fills = (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c);
+      fills.forEach(function(f){
+        if (f.type === "buy"){
+          cost += f.qty * f.price;
+          qty += f.qty;
+        } else if (qty > 0){
+          var avg = cost / qty;
+          var sellQty = Math.min(f.qty, qty);
+          realizedPL += sellQty * (f.price - avg);
+          qty -= sellQty;
+          cost = avg * Math.max(0, qty);
+        }
+      });
     });
     return { qty: qty, avgCost: qty > 0 ? cost/qty : 0, realizedPL: realizedPL };
   }
@@ -1077,7 +1100,7 @@
     entryCard.className = "card";
     entryCard.innerHTML =
       '<h3>새 사이클 입력</h3>' +
-      '<div class="card-desc">아래 주문표대로 매매했다면 그 결과를, 안 했다면(홀드) 오늘 종가와 기존 보유수량 그대로를 그 아래 입력칸 4개에 입력하세요. 그러면 다음 사이클의 매수가·매도가·매수한도가 자동으로 다시 계산돼요.</div>' +
+      '<div class="card-desc">아래 주문표대로 매매했다면 체결내역에 한 줄씩 추가하고, 안 했다면(홀드) 비워둔 채로 오늘 종가만 입력하세요. 그러면 다음 사이클의 매수가·매도가·매수한도가 자동으로 다시 계산돼요.</div>' +
       '<h3 style="margin-top:16px;font-size:14px;">지금 걸어둘 주문표</h3>' +
       '<div class="card-desc">아래 표대로 지정가 주문을 걸어두세요. 매수는 매수한도(Pool%) 안에서, 매도는 E가 V로 돌아오는 지점까지예요.' +
         (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ', 표 계산에는 안 쓰여요)</span>') : '') +
@@ -1091,10 +1114,16 @@
         '<span>매도가 ↑ <b>' + fmtMoney0(sellBand) + '</b></span>' +
         '<span>매수한도 <b>' + fmtMoney0(round2(last.Pool * (limit.buyPct/100))) + '</b> (' + limit.buyPct.toFixed(0) + '%)</span>' +
       '</div>' +
-      '<div class="form-grid">' +
+      '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
         field('이번 사이클 날짜 <span class="hint">보통 매매(또는 홀드 확인)한 날</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
-        field('체결가/종가 ($) <span class="hint">' + inst.ticker + ' 오늘 종가, 매매했으면 체결가</span>', '<input id="cy_price" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
-        field('매매 후 최종 보유수량 <span class="hint">사고팔고 난 뒤 지금 남은 총 수량. 홀드면 직전과 동일</span>', '<input id="cy_qty" type="number" step="0.0001" value="' + last.qty + '" />') +
+        field('오늘 종가 ($) <span class="hint">' + inst.ticker + ' 종가 — 이 사이클 끝 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
+      '</div>' +
+      '<div style="margin-top:14px;">' +
+        '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">이번 사이클 체결내역 <span class="hint">매매 안 했으면(홀드) 비워두세요. 여러 번 나눠 샀거나, 사고팔고 둘 다 했으면 한 줄씩 추가하세요</span></label>' +
+        '<div id="fillsListHost"></div>' +
+        '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="addFillBtn" type="button">+ 체결 추가</button></div>' +
+      '</div>' +
+      '<div class="form-grid" style="margin-top:14px;">' +
         field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" step="0.01" value="0" />') +
         field("SPY 종가 (선택)", '<input id="cy_spy" type="number" step="0.01" placeholder="비교차트용" />') +
         field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" step="0.01" placeholder="비교차트용" />') +
@@ -1156,36 +1185,79 @@
       }
     });
 
-    var priceEl = document.getElementById("cy_price"), qtyEl = document.getElementById("cy_qty"), depEl = document.getElementById("cy_deposit"), dateEl = document.getElementById("cy_date");
+    var closeEl = document.getElementById("cy_close"), depEl = document.getElementById("cy_deposit"), dateEl = document.getElementById("cy_date");
     function signedDeposit(rawVal){
       var d = parseFloat(rawVal) || 0;
       var segNow = currentSegment(inst, dateEl.value || todayStr());
       return segNow.type === "인출식" ? -Math.abs(d) : d;
     }
+
+    var pendingFills = [];
+    function validFills(){
+      return pendingFills.filter(function(f){ return f.qty > 0 && f.price > 0; });
+    }
+    function renderFillsList(){
+      var host = document.getElementById("fillsListHost");
+      if (!pendingFills.length){
+        host.innerHTML = '<div class="chart-empty" style="padding:14px;">매매 없음 (홀드) — 아래 종가만 입력하면 돼요.</div>';
+        return;
+      }
+      host.innerHTML = '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
+        '<th>구분</th><th class="num">수량</th><th class="num">가격</th><th></th></tr></thead><tbody>' +
+        pendingFills.map(function(f, i){
+          return '<tr data-i="' + i + '">' +
+            '<td data-label="구분"><select class="fill-type">' +
+              '<option value="buy"' + (f.type==="buy"?" selected":"") + '>매수</option>' +
+              '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
+            '</select></td>' +
+            '<td class="num" data-label="수량"><input type="number" step="0.0001" class="cell-input fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
+            '<td class="num" data-label="가격"><input type="number" step="0.01" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
+            '<td><button type="button" class="btn btn-sm btn-ghost btn-danger fill-del">삭제</button></td>' +
+            '</tr>';
+        }).join("") + '</tbody></table></div>';
+      Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
+        var i = parseInt(tr.getAttribute("data-i"), 10);
+        tr.querySelector(".fill-type").addEventListener("change", function(){ pendingFills[i].type = this.value; updatePreview(); });
+        tr.querySelector(".fill-qty").addEventListener("input", function(){ pendingFills[i].qty = parseFloat(this.value)||0; updatePreview(); });
+        tr.querySelector(".fill-price").addEventListener("input", function(){ pendingFills[i].price = parseFloat(this.value)||0; updatePreview(); });
+        tr.querySelector(".fill-del").addEventListener("click", function(){ pendingFills.splice(i,1); renderFillsList(); updatePreview(); });
+      });
+    }
+    renderFillsList();
+    document.getElementById("addFillBtn").addEventListener("click", function(){
+      pendingFills.push({ type: "buy", qty: 0, price: 0 });
+      renderFillsList();
+      updatePreview();
+    });
+
     function updatePreview(){
-      var price = parseFloat(priceEl.value), qty = parseFloat(qtyEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
+      var close = parseFloat(closeEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
       var box = document.getElementById("cyPreview");
-      if (isNaN(price) || isNaN(qty) || !date){ box.style.display = "none"; return; }
-      var res = computeCycle(inst, last, {date:date, price:price, qty:qty, deposit:dep, spy:"", qqq:""});
+      if (isNaN(close) || close<=0 || !date){ box.style.display = "none"; return; }
+      var res = computeCycle(inst, last, {date:date, closePrice:close, fills:validFills(), deposit:dep, spy:"", qqq:""});
       box.style.display = "flex";
       var sigCls = res.signal === "buy" ? "signal-buy" : (res.signal === "sell" ? "signal-sell" : "signal-hold");
       var sigTxt = res.signal === "buy" ? "매수 신호" : (res.signal === "sell" ? "매도 신호" : "홀드");
       box.innerHTML =
         '<span class="signal-badge ' + sigCls + '"><span class="dot"></span>' + sigTxt + '</span>' +
+        '<span>사이클 종료 후 보유수량 <b>' + res.qty + '주</b></span>' +
         '<span>다음 V <b>' + fmtMoney0(res.Vnext) + '</b></span>' +
         '<span>다음 매수 밴드 <b>' + fmtMoney0(res.buyBandNext) + '</b></span>' +
         '<span>다음 매도 밴드 <b>' + fmtMoney0(res.sellBandNext) + '</b></span>' +
         '<span>G <b>' + res.G + '</b></span>' +
         '<span>매수한도 <b>' + fmtMoney0(res.buyLimitAmt) + '</b> (' + res.poolLimitPct.toFixed(0) + '%)</span>';
     }
-    [priceEl, qtyEl, depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
+    [closeEl, depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
 
     document.getElementById("cy_submit").addEventListener("click", function(){
-      var price = parseFloat(priceEl.value), qty = parseFloat(qtyEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
+      var close = parseFloat(closeEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
       var spyEl = document.getElementById("cy_spy"), qqqEl = document.getElementById("cy_qqq");
-      if (isNaN(price) || price<=0 || !date){ alert("날짜와 현재가는 필수예요."); return; }
-      if (isNaN(qty)) { alert("보유수량을 입력해주세요."); return; }
-      var res = computeCycle(inst, last, {date:date, price:price, qty:qty, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
+      if (isNaN(close) || close<=0 || !date){ alert("날짜와 오늘 종가는 필수예요."); return; }
+      var fills = validFills();
+      if (pendingFills.length && fills.length !== pendingFills.length){
+        if (!confirm("수량이나 가격이 비어있는 체결 항목이 있어요. 그건 빼고 기록할까요?")) return;
+      }
+      var res = computeCycle(inst, last, {date:date, closePrice:close, fills:fills, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
       inst.cycles.push(res);
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
       saveState();
@@ -1716,10 +1788,17 @@
     var rows = inst.cycles.slice().reverse().map(function(c){
       var sigCls = c.signal === "buy" ? "signal-buy" : (c.signal === "sell" ? "signal-sell" : "signal-hold");
       var sigTxt = c.signal === "buy" ? "매수" : (c.signal === "sell" ? "매도" : "홀드");
+      var fills = c.fills || [];
+      var buyN = fills.filter(function(f){ return f.type==="buy"; }).length;
+      var sellN = fills.filter(function(f){ return f.type==="sell"; }).length;
+      var fillsTxt = fills.length
+        ? [buyN ? ("매수 " + buyN + "건") : null, sellN ? ("매도 " + sellN + "건") : null].filter(Boolean).join(" · ")
+        : "–";
       return '<tr>' +
         '<td data-label="날짜">' + fmtDate(c.date) + '</td>' +
         '<td data-label="신호"><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
-        '<td class="num" data-label="가격">' + fmtMoney(c.price) + '</td>' +
+        '<td data-label="체결내역">' + fillsTxt + '</td>' +
+        '<td class="num" data-label="종가">' + fmtMoney(c.price) + '</td>' +
         '<td class="num" data-label="수량">' + c.qty + '</td>' +
         '<td class="num" data-label="평가금 E">' + fmtMoney0(c.E) + '</td>' +
         '<td class="num" data-label="적립/인출">' + fmtMoney0(c.deposit) + '</td>' +
@@ -1731,7 +1810,7 @@
         '</tr>';
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
-      '<th>날짜</th><th>신호</th><th class="num">가격</th><th class="num">수량</th><th class="num">평가금 E</th>' +
+      '<th>날짜</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
       '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
