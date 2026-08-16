@@ -666,6 +666,26 @@
     return (cycleOrInit.E != null ? cycleOrInit.E : (cycleOrInit.qty||0)) + (cycleOrInit.Pool||0);
   }
 
+  // Reference-only running weighted-average cost, derived purely from recorded
+  // cycle fills. Not used anywhere in the VR formula itself (V/Pool/G/E don't
+  // need it) — it's just for showing an approximate profit/return alongside.
+  function computeEffectiveCostBasis(inst){
+    var qty = inst.initQty || 0;
+    var cost = qty * (inst.initPrice || 0);
+    inst.cycles.forEach(function(c){
+      var dq = c.deltaQty || 0;
+      if (dq > 0){
+        cost += dq * c.price;
+        qty += dq;
+      } else if (dq < 0 && qty > 0){
+        var avg = cost / qty;
+        qty += dq;
+        cost = avg * Math.max(0, qty);
+      }
+    });
+    return { qty: qty, avgCost: qty > 0 ? cost/qty : 0 };
+  }
+
   function normalizeState(){
     if (!state.instances) state.instances = [];
     if (state.selectedId === undefined) state.selectedId = null;
@@ -833,15 +853,24 @@
       '</div>';
     mainArea.appendChild(head);
 
+    var costBasis = computeEffectiveCostBasis(inst);
+    var refE = last.E != null ? last.E : (last.qty * (inst.initPrice||0));
+    var refInvested = costBasis.qty * costBasis.avgCost;
+    var refProfit = costBasis.avgCost > 0 ? (refE - refInvested) : null;
+    var refProfitPct = (refProfit != null && refInvested > 0) ? (refProfit/refInvested*100) : null;
+
     var stats = document.createElement("div");
     stats.className = "stat-strip";
     stats.innerHTML =
       stat("현재 V (기준값)", fmtMoney0(last.Vnext)) +
-      stat("평가금 E", fmtMoney0(last.E != null ? last.E : (last.qty * (inst.initPrice||0)))) +
+      stat("평가금 E", fmtMoney0(refE)) +
       stat("Pool (현금)", fmtMoney0(last.Pool)) +
       stat("G값", G, true) +
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
-      stat("매도 밴드 ↑", fmtMoney0(sellBand));
+      stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
+      stat("실효평단 (참고용)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
+      stat("평가손익 (참고용)", refProfit == null ? "–" : fmtMoney0(refProfit)) +
+      stat("수익률 (참고용)", refProfitPct == null ? "–" : fmtPct(refProfitPct,1), true);
     mainArea.appendChild(stats);
 
     // cycle entry card
