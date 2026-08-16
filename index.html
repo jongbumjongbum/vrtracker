@@ -382,6 +382,21 @@
         <label>매수/매도 밴드 (%)</label>
         <input id="ni_band" type="number" value="15" />
       </div>
+      <div class="field" style="grid-column:1/3;">
+        <label>Pool 매수한도 방식 <span class="hint">만든 뒤에도 "Pool 한도 설정" 버튼으로 언제든 다시 바꿀 수 있어요</span></label>
+        <select id="ni_pl_mode">
+          <option value="schedule">시간이 지나며 점점 감소</option>
+          <option value="fixed">고정 비율 유지</option>
+        </select>
+      </div>
+      <div class="field"><label>시작한도 (%)</label><input id="ni_pl_base" type="number" step="1" value="75" /></div>
+      <div class="field"><label>감소폭 (%, 주기당)</label><input id="ni_pl_step" type="number" step="1" value="5" /></div>
+      <div class="field"><label>감소 주기 (일)</label><input id="ni_pl_stepdays" type="number" step="1" value="182.5" /></div>
+      <div class="field"><label>최소 한도 (%)</label><input id="ni_pl_floor" type="number" step="1" value="10" /></div>
+      <div class="field" style="grid-column:1/3;">
+        <label>고정 매수한도 (%) <span class="hint">위에서 "고정 비율 유지" 선택했을 때만 쓰여요</span></label>
+        <input id="ni_pl_fixed" type="number" step="1" value="10" />
+      </div>
     </div>
     <div class="form-actions">
       <button class="btn btn-ghost" id="ni_cancel" type="button">취소</button>
@@ -1331,11 +1346,13 @@
     var tranches = [];
     for (var i=0; i<n; i++){
       var priceI = priceStart + (priceEnd - priceStart) * (i+1)/n;
-      var qtyI = base + (i === n-1 ? remainder : 0);
+      var qtyI = base + (i < remainder ? 1 : 0);
       if (qtyI > 0) tranches.push({ price: round2(priceI), qty: qtyI });
     }
     return tranches;
   }
+
+  var LADDER_RANGE_PCT = 0.05; // ladder only spans within +/-5% of the band price, not all the way to today's price
 
   function renderOrderTable(inst, last, buyBand, sellBand, limit){
     var qty = last.qty || 0;
@@ -1352,8 +1369,10 @@
       var sellPrice = sellBand / qty;
       var buyQtyTotal = Math.floor(Math.min(Math.max(0, (V - buyBand) / buyPrice), buyLimitAmt / buyPrice));
       var sellQtyTotal = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPrice), qty));
-      var buyStart = (refNow != null && refNow > buyPrice) ? refNow : buyPrice;
-      var sellStart = (refNow != null && refNow < sellPrice) ? refNow : sellPrice;
+      var buyCeil = buyPrice * (1 + LADDER_RANGE_PCT);
+      var sellFloor = sellPrice * (1 - LADDER_RANGE_PCT);
+      var buyStart = (refNow != null && refNow > buyPrice) ? Math.min(refNow, buyCeil) : buyPrice;
+      var sellStart = (refNow != null && refNow < sellPrice) ? Math.max(refNow, sellFloor) : sellPrice;
       buyTranches = buildLadder(buyQtyTotal, buyStart, buyPrice, MAX_LADDER_PRICE_STEP);
       sellTranches = buildLadder(sellQtyTotal, sellStart, sellPrice, MAX_LADDER_PRICE_STEP);
       if ((V - buyBand) > buyLimitAmt + 0.01) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 금액보다 적게 매수돼요.';
@@ -1639,6 +1658,15 @@
 
   /* ---------------- modals ---------------- */
   var newModal = document.getElementById("newInstanceModal");
+  function applyPoolLimitDefaultsToNiForm(type){
+    var cfg = defaultPoolLimitConfig(type);
+    document.getElementById("ni_pl_mode").value = cfg.mode;
+    document.getElementById("ni_pl_base").value = cfg.basePct;
+    document.getElementById("ni_pl_step").value = cfg.stepPct;
+    document.getElementById("ni_pl_stepdays").value = cfg.stepDays;
+    document.getElementById("ni_pl_floor").value = cfg.floorPct;
+    document.getElementById("ni_pl_fixed").value = cfg.fixedPct;
+  }
   function openNewInstanceModal(){
     document.getElementById("ni_name").value = "";
     document.getElementById("ni_type").value = "적립식";
@@ -1652,6 +1680,7 @@
     document.getElementById("ni_g").value = 10;
     document.getElementById("ni_goal").value = "";
     document.getElementById("ni_band").value = 15;
+    applyPoolLimitDefaultsToNiForm("적립식");
     newModal.classList.remove("hidden");
   }
   Array.prototype.forEach.call(document.querySelectorAll("#modeSwitch button"), function(btn){
@@ -1666,6 +1695,7 @@
   document.getElementById("ni_type").addEventListener("change", function(){
     var t = this.value;
     document.getElementById("ni_g").value = TYPE_DEFAULTS[t].startG;
+    applyPoolLimitDefaultsToNiForm(t);
   });
   document.getElementById("ni_create").addEventListener("click", function(){
     var name = document.getElementById("ni_name").value.trim();
@@ -1680,6 +1710,14 @@
     var g = parseFloat(document.getElementById("ni_g").value) || TYPE_DEFAULTS[type].startG;
     var goal = parseFloat(document.getElementById("ni_goal").value);
     var bandPct = parseFloat(document.getElementById("ni_band").value) || 15;
+    var poolLimitConfig = {
+      mode: document.getElementById("ni_pl_mode").value,
+      basePct: parseFloat(document.getElementById("ni_pl_base").value) || 75,
+      stepPct: parseFloat(document.getElementById("ni_pl_step").value) || 5,
+      stepDays: parseFloat(document.getElementById("ni_pl_stepdays").value) || 182.5,
+      floorPct: parseFloat(document.getElementById("ni_pl_floor").value) || 10,
+      fixedPct: parseFloat(document.getElementById("ni_pl_fixed").value) || 10
+    };
     if (!name || !date || isNaN(v) || isNaN(pool)){
       alert("이름, 시작일, 시작 V, 시작 Pool은 필수예요.");
       return;
@@ -1690,7 +1728,7 @@
       goalAmount: isNaN(goal) ? null : goal,
       band: { low: 1 - bandPct/100, high: 1 + bandPct/100 },
       typeSegments: [ { type: type, startDate: date, startG: g } ],
-      poolLimitConfig: defaultPoolLimitConfig(type),
+      poolLimitConfig: poolLimitConfig,
       cycles: []
     };
     state.instances.push(inst);
