@@ -913,6 +913,12 @@
     entryCard.innerHTML =
       '<h3>새 사이클 입력</h3>' +
       '<div class="card-desc">직전 사이클의 체결 결과(보유수량·현재가)와 이번 사이클 적립/인출금을 입력하면 다음 매수가·매도가·매수한도가 자동 계산돼요.</div>' +
+      '<div class="preview-band">' +
+        '<span><b>지금 활성화된 밴드</b></span>' +
+        '<span>매수가 ↓ <b>' + fmtMoney0(buyBand) + '</b></span>' +
+        '<span>매도가 ↑ <b>' + fmtMoney0(sellBand) + '</b></span>' +
+        '<span>매수한도 <b>' + fmtMoney0(round2(last.Pool * (limit.buyPct/100))) + '</b> (' + limit.buyPct.toFixed(0) + '%)</span>' +
+      '</div>' +
       '<div class="form-grid">' +
         field("날짜", '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
         field("현재가 ($)", '<input id="cy_price" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
@@ -1312,7 +1318,8 @@
     host.appendChild(wrap);
 
     var dates = points.map(function(p){ return new Date(p.date).getTime(); });
-    var minD = Math.min.apply(null, dates), maxD = Math.max.apply(null, dates);
+    var todayMs = new Date(todayStr()).getTime();
+    var minD = Math.min.apply(null, dates), maxD = Math.max(Math.max.apply(null, dates), todayMs);
     if (minD === maxD) maxD = minD + 86400000;
     var vals = [];
     points.forEach(function(p){ vals.push(p.E, p.Vnext, p.buyBandNext, p.sellBandNext); });
@@ -1332,15 +1339,41 @@
       svg.appendChild(lbl);
     }
 
-    // band area
-    var bandPathTop = points.map(function(p,i){ return (i===0?"M":"L") + x(new Date(p.date).getTime()) + "," + y(p.sellBandNext); }).join(" ");
-    var bandPathBottom = points.slice().reverse().map(function(p){ return "L" + x(new Date(p.date).getTime()) + "," + y(p.buyBandNext); }).join(" ");
-    svg.appendChild(svgEl("path", {d: bandPathTop + " " + bandPathBottom + " Z", fill: cssVar('--muted'), opacity:0.13, stroke:"none"}));
+    // V and the buy/sell bands are constant from the moment a cycle is
+    // recorded until the next one — build a step-after curve (flat segments,
+    // vertical jumps) rather than diagonally interpolating between cycles,
+    // and extend the last segment out to today so a single cycle still draws
+    // a visible band instead of a zero-width point.
+    function buildStepPoints(getVal){
+      var pts = [];
+      points.forEach(function(p){
+        var xi = x(new Date(p.date).getTime());
+        var yi = y(getVal(p));
+        if (pts.length > 0) pts.push([xi, pts[pts.length-1][1]]);
+        pts.push([xi, yi]);
+      });
+      if (todayMs > dates[dates.length-1]){
+        pts.push([x(todayMs), pts[pts.length-1][1]]);
+      }
+      return pts;
+    }
+    function pointsToPath(pts){
+      return pts.map(function(pt,i){ return (i===0?"M":"L") + pt[0] + "," + pt[1]; }).join(" ");
+    }
+    function pointsToPathReversed(pts){
+      return pts.slice().reverse().map(function(pt){ return "L" + pt[0] + "," + pt[1]; }).join(" ");
+    }
+
+    var sellPts = buildStepPoints(function(p){ return p.sellBandNext; });
+    var buyPts = buildStepPoints(function(p){ return p.buyBandNext; });
+    var vPts = buildStepPoints(function(p){ return p.Vnext; });
+
+    svg.appendChild(svgEl("path", {d: pointsToPath(sellPts) + " " + pointsToPathReversed(buyPts) + " Z", fill: cssVar('--muted'), opacity:0.13, stroke:"none"}));
+    svg.appendChild(svgEl("path", {d: pointsToPath(vPts), fill:"none", stroke:cssVar('--ink-soft'), "stroke-width":1.5, "stroke-dasharray":"4 3"}));
 
     function linePath(key){
       return points.map(function(p,i){ return (i===0?"M":"L") + x(new Date(p.date).getTime()) + "," + y(p[key]); }).join(" ");
     }
-    svg.appendChild(svgEl("path", {d: linePath("Vnext"), fill:"none", stroke:cssVar('--ink-soft'), "stroke-width":1.5, "stroke-dasharray":"4 3"}));
     svg.appendChild(svgEl("path", {d: linePath("E"), fill:"none", stroke:cssVar('--s-vr'), "stroke-width":2.5, "stroke-linecap":"round", "stroke-linejoin":"round"}));
 
     points.forEach(function(p){
