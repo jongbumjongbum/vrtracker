@@ -1,0 +1,1092 @@
+<title>VR 밸류리밸런싱 트래커</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --ink: #1B2430;
+    --ink-soft: #5B6472;
+    --muted: #8A8F98;
+    --bg: #EDEFE9;
+    --panel: #FFFFFF;
+    --panel-2: #F5F6F1;
+    --line: #DCDFD5;
+    --accent: #A9782F;
+    --accent-ink: #6E4E1E;
+    --accent-soft: #F1E6D2;
+    --buy: #0ca30c;
+    --buy-soft: #E4F5E1;
+    --sell: #d03b3b;
+    --sell-soft: #FBE6E4;
+    --hold: #8A8F98;
+    --hold-soft: #ECEDE9;
+    --s-vr: #2a78d6;
+    --s-spy: #eb6834;
+    --s-qqq: #1baf7a;
+    --shadow: 0 1px 2px rgba(27,36,48,.06), 0 6px 20px rgba(27,36,48,.06);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      --ink: #E8E6DD;
+      --ink-soft: #B7BEC9;
+      --muted: #8D95A3;
+      --bg: #12161D;
+      --panel: #1B212B;
+      --panel-2: #202834;
+      --line: #2B3542;
+      --accent: #D8A857;
+      --accent-ink: #F3D89B;
+      --accent-soft: #33291A;
+      --buy: #4FBE93;
+      --buy-soft: #163628;
+      --sell: #E2684B;
+      --sell-soft: #3A2019;
+      --hold: #8D95A3;
+      --hold-soft: #232A34;
+      --s-vr: #3987e5;
+      --s-spy: #d95926;
+      --s-qqq: #199e70;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #E8E6DD; --ink-soft: #B7BEC9; --muted: #8D95A3; --bg: #12161D;
+    --panel: #1B212B; --panel-2: #202834; --line: #2B3542;
+    --accent: #D8A857; --accent-ink: #F3D89B; --accent-soft: #33291A;
+    --buy: #4FBE93; --buy-soft: #163628; --sell: #E2684B; --sell-soft: #3A2019;
+    --hold: #8D95A3; --hold-soft: #232A34;
+    --s-vr: #3987e5; --s-spy: #d95926; --s-qqq: #199e70;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --ink: #1B2430; --ink-soft: #5B6472; --muted: #8A8F98; --bg: #EDEFE9;
+    --panel: #FFFFFF; --panel-2: #F5F6F1; --line: #DCDFD5;
+    --accent: #A9782F; --accent-ink: #6E4E1E; --accent-soft: #F1E6D2;
+    --buy: #0ca30c; --buy-soft: #E4F5E1; --sell: #d03b3b; --sell-soft: #FBE6E4;
+    --hold: #8A8F98; --hold-soft: #ECEDE9;
+    --s-vr: #2a78d6; --s-spy: #eb6834; --s-qqq: #1baf7a;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  h1, h2, h3 { font-family: Georgia, "Iowan Old Style", "Noto Serif KR", serif; text-wrap: balance; margin: 0; }
+  .num { font-family: ui-monospace, "SF Mono", Consolas, "Roboto Mono", monospace; font-variant-numeric: tabular-nums; }
+  button, input, select { font: inherit; color: inherit; }
+
+  .app { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; } }
+
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 20px 16px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .brand h1 { font-size: 20px; }
+  .brand .tag { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+  .theme-toggle {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-soft);
+    border-radius: 8px; padding: 5px 9px; font-size: 12px; cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border-radius: 9px; border: 1px solid var(--line); background: var(--panel-2);
+    color: var(--ink); padding: 9px 13px; cursor: pointer; font-size: 13.5px;
+    transition: border-color .15s, background .15s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--ink-soft); }
+  .btn-ghost:hover { background: var(--panel-2); color: var(--ink); }
+  .btn-block { width: 100%; }
+  .btn-sm { padding: 6px 10px; font-size: 12.5px; }
+  .btn-danger { color: var(--sell); }
+
+  .instance-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
+  .instance-card {
+    text-align: left; border: 1px solid var(--line); background: var(--panel-2);
+    border-radius: 12px; padding: 12px 13px; cursor: pointer; display: flex; flex-direction: column; gap: 6px;
+  }
+  .instance-card:hover { border-color: var(--accent); }
+  .instance-card.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: var(--shadow); }
+  .instance-card .row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .instance-card .iname { font-weight: 650; font-size: 14px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 650;
+    padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+  }
+  .chip-accum { background: var(--buy-soft); color: var(--buy); }
+  .chip-lump { background: var(--hold-soft); color: var(--ink-soft); }
+  .chip-withdraw { background: var(--sell-soft); color: var(--sell); }
+  .instance-card .meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  .progress-track { height: 5px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); }
+
+  .sidebar-foot { display: flex; gap: 8px; }
+
+  .main { padding: 26px 30px 60px; max-width: 1180px; }
+  .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 60px 10px; max-width: 480px; }
+  .empty-state h2 { font-size: 24px; }
+  .empty-state p { color: var(--ink-soft); }
+
+  .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .detail-head h2 { font-size: 26px; }
+  .detail-head .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .stat-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 20px; }
+  @media (max-width: 980px) { .stat-strip { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .stat-strip { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat .label { font-size: 11px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; }
+  .stat .value { font-size: 18px; font-weight: 650; }
+  .stat .value.small { font-size: 15px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px; margin-bottom: 20px; box-shadow: var(--shadow);
+  }
+  .card h3 { font-size: 16px; margin-bottom: 4px; }
+  .card .card-desc { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+
+  .signal-badge {
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12.5px;
+    padding: 4px 11px; border-radius: 99px;
+  }
+  .signal-buy { background: var(--buy-soft); color: var(--buy); }
+  .signal-sell { background: var(--sell-soft); color: var(--sell); }
+  .signal-hold { background: var(--hold-soft); color: var(--ink-soft); }
+  .signal-badge .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; }
+
+  .form-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 760px) { .form-grid { grid-template-columns: repeat(2, 1fr); } }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+  .field .hint { font-size: 10.5px; color: var(--muted); font-weight: 400; }
+  .field input, .field select {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+    border-radius: 8px; padding: 8px 10px; font-size: 13.5px;
+  }
+  .field input:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+  .preview-band {
+    display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px;
+    background: var(--panel-2); border: 1px dashed var(--line); font-size: 13px; margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .preview-band b { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+  .table-wrap { overflow-x: auto; }
+  th, td { text-align: right; padding: 7px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; position: sticky; top: 0; background: var(--panel); }
+  tbody tr:hover { background: var(--panel-2); }
+  td.num, th.num { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--ink-soft); }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 14px; height: 3px; border-radius: 2px; }
+  .legend .swatch.area { width: 14px; height: 10px; border-radius: 2px; opacity: .5; }
+  .legend .swatch.dot { width: 8px; height: 8px; border-radius: 99px; }
+
+  .chart-wrap { position: relative; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; background: var(--ink); color: var(--bg);
+    padding: 7px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.5;
+    transform: translate(-50%, -110%); white-space: nowrap; box-shadow: var(--shadow); opacity: 0;
+    transition: opacity .1s; z-index: 5;
+  }
+  :root[data-theme="dark"] .chart-tooltip, @media (prefers-color-scheme:dark) { }
+  .chart-tooltip b { font-family: ui-monospace, monospace; }
+  .chart-empty { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
+
+  .transition-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .transition-grid { grid-template-columns: 1fr; } }
+  .metric-box { background: var(--panel-2); border-radius: 10px; padding: 13px 15px; }
+  .metric-box .m-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .metric-box .m-value { font-size: 21px; font-weight: 700; }
+  .metric-box .m-note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .withdraw-check-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; }
+  .withdraw-check-row .field { flex: 1; }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(10, 12, 16, .45); display: flex;
+    align-items: center; justify-content: center; z-index: 40; padding: 20px;
+  }
+  .modal {
+    background: var(--panel); border-radius: 16px; padding: 24px 26px; width: 100%; max-width: 480px;
+    box-shadow: var(--shadow); max-height: 88vh; overflow-y: auto;
+  }
+  .modal h3 { font-size: 18px; margin-bottom: 16px; }
+  .modal .form-grid { grid-template-columns: 1fr 1fr; }
+  .hidden { display: none !important; }
+
+  .type-switch-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 16px; }
+  .type-opt {
+    display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 13px; cursor: pointer; background: var(--panel-2);
+  }
+  .type-opt.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .type-opt input { accent-color: var(--accent); }
+
+  .footnote { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  .kbd-hint { font-size: 11px; color: var(--muted); }
+</style>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div>
+        <h1>VR 트래커</h1>
+        <div class="tag">밸류리밸런싱 사이클 관리</div>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button">라이트</button>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="newInstanceBtn" type="button">+ 새 VR 기수 만들기</button>
+
+    <div class="instance-list" id="instanceList"></div>
+
+    <div class="sidebar-foot">
+      <button class="btn btn-ghost btn-sm" id="exportBtn" type="button" style="flex:1">백업 내보내기</button>
+      <button class="btn btn-ghost btn-sm" id="importBtn" type="button" style="flex:1">불러오기</button>
+      <input type="file" id="importFile" accept="application/json" class="hidden" />
+    </div>
+  </aside>
+
+  <main class="main" id="mainArea"></main>
+</div>
+
+<div class="modal-overlay hidden" id="newInstanceModal">
+  <div class="modal">
+    <h3>새 VR 기수 만들기</h3>
+    <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+      <div class="field" style="grid-column:1/3;">
+        <label>기수 이름</label>
+        <input id="ni_name" type="text" placeholder="예: VR 7기 적립식" />
+      </div>
+      <div class="field">
+        <label>운용 방식</label>
+        <select id="ni_type">
+          <option value="적립식">적립식 (계속 입금)</option>
+          <option value="거치식">거치식 (추가입금 없음)</option>
+          <option value="인출식">인출식 (정기 인출)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>티커</label>
+        <input id="ni_ticker" type="text" value="TQQQ" />
+      </div>
+      <div class="field">
+        <label>시작일</label>
+        <input id="ni_date" type="date" />
+      </div>
+      <div class="field">
+        <label>사이클 길이(일)</label>
+        <input id="ni_cycledays" type="number" value="14" />
+      </div>
+      <div class="field">
+        <label>시작 V (목표기준값, $)</label>
+        <input id="ni_v" type="number" step="0.01" />
+      </div>
+      <div class="field">
+        <label>시작 Pool (현금, $)</label>
+        <input id="ni_pool" type="number" step="0.01" />
+      </div>
+      <div class="field">
+        <label>시작 보유수량</label>
+        <input id="ni_qty" type="number" step="0.0001" value="0" />
+      </div>
+      <div class="field">
+        <label>시작가 ($)</label>
+        <input id="ni_price" type="number" step="0.01" />
+      </div>
+      <div class="field">
+        <label>시작 G값 <span class="hint">(기본: 적립·거치10 / 인출40)</span></label>
+        <input id="ni_g" type="number" />
+      </div>
+      <div class="field">
+        <label>목표 금액 ($, 선택)</label>
+        <input id="ni_goal" type="number" step="1" placeholder="선택 입력" />
+      </div>
+      <div class="field">
+        <label>매수/매도 밴드 (%)</label>
+        <input id="ni_band" type="number" value="15" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="ni_cancel" type="button">취소</button>
+      <button class="btn btn-primary" id="ni_create" type="button">만들기</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="switchTypeModal">
+  <div class="modal">
+    <h3>운용 방식 전환</h3>
+    <p class="footnote" style="margin-bottom:12px;">라오어의 VR도 정해진 자동 전환 공식은 없고, 본인이 정한 목표 금액에 도달했을 때 수동으로 전환해요. 아래 지표를 참고해서 결정하세요.</p>
+    <div class="type-switch-options" id="switchOptions"></div>
+    <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+      <div class="field">
+        <label>전환일</label>
+        <input id="sw_date" type="date" />
+      </div>
+      <div class="field">
+        <label>새 시작 G값</label>
+        <input id="sw_g" type="number" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="sw_cancel" type="button">취소</button>
+      <button class="btn btn-primary" id="sw_confirm" type="button">전환하기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- state ---------------- */
+  var STORE_KEY = "vr_tracker_state_v1";
+  var state = loadState();
+
+  function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+  function loadState(){
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e){}
+    return { instances: [], selectedId: null };
+  }
+  function saveState(){
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  }
+
+  /* ---------------- domain logic ---------------- */
+  var TYPE_DEFAULTS = {
+    "적립식": { startG: 10, gStepDays: 365, poolBase: 75, poolStepPct: 5, poolStepDays: 182.5, poolFloor: 10 },
+    "거치식": { startG: 10, gStepDays: 182.5, poolBase: 75, poolStepPct: 5, poolStepDays: 182.5, poolFloor: 10 },
+    "인출식": { startG: 40, gStepDays: 182.5, buyLimitPct: 10 }
+  };
+
+  function currentSegment(inst, atDate){
+    var d = new Date(atDate).getTime();
+    var seg = inst.typeSegments[0];
+    for (var i=0;i<inst.typeSegments.length;i++){
+      if (new Date(inst.typeSegments[i].startDate).getTime() <= d) seg = inst.typeSegments[i];
+    }
+    return seg;
+  }
+  function daysBetween(a,b){ return (new Date(b).getTime() - new Date(a).getTime()) / 86400000; }
+
+  function currentG(inst, atDate){
+    var seg = currentSegment(inst, atDate);
+    var def = TYPE_DEFAULTS[seg.type];
+    var days = Math.max(0, daysBetween(seg.startDate, atDate));
+    var steps = Math.floor(days / def.gStepDays);
+    return seg.startG + steps;
+  }
+
+  function currentPoolLimit(inst, atDate){
+    var seg = currentSegment(inst, atDate);
+    var def = TYPE_DEFAULTS[seg.type];
+    if (seg.type === "인출식"){
+      return { buyPct: def.buyLimitPct, sellPct: null };
+    }
+    var days = Math.max(0, daysBetween(seg.startDate, atDate));
+    var steps = Math.floor(days / def.poolStepDays);
+    var pct = Math.max(def.poolFloor, def.poolBase - steps*def.poolStepPct);
+    return { buyPct: pct, sellPct: null };
+  }
+
+  function computeCycle(inst, prevCycleOrInit, input){
+    // input: {date, price, qty, deposit, spy, qqq}
+    var Vprev = prevCycleOrInit.Vnext;
+    var Poolprev = prevCycleOrInit.Pool;
+    var Qprev = prevCycleOrInit.qty;
+    var G = currentG(inst, input.date);
+    var E = round2(input.qty * input.price);
+    var raw = Vprev + (Poolprev / G) + ((E - Vprev) / (2 * Math.sqrt(G)));
+    var Vnext = round2(raw) + Number(input.deposit || 0);
+    var deltaQty = input.qty - Qprev;
+    var tradeCash = -(deltaQty * input.price);
+    var Pool = round2(Poolprev + Number(input.deposit || 0) + tradeCash);
+    var band = inst.band || {low:0.85, high:1.15};
+    var buyBandPrev = round2(Vprev * band.low);
+    var sellBandPrev = round2(Vprev * band.high);
+    var signal = "hold";
+    if (E <= buyBandPrev) signal = "buy";
+    else if (E >= sellBandPrev) signal = "sell";
+    var limit = currentPoolLimit(inst, input.date);
+    var buyBandNext = round2(Vnext * band.low);
+    var sellBandNext = round2(Vnext * band.high);
+    var buyLimitAmt = round2(Pool * (limit.buyPct/100));
+    return {
+      id: uid(), date: input.date, price: input.price, qty: input.qty, E: E,
+      deposit: Number(input.deposit||0), G: G, Vprev: Vprev, Vnext: Vnext,
+      Pool: Pool, PoolPrev: Poolprev, deltaQty: deltaQty, tradeCash: tradeCash,
+      buyBandPrev: buyBandPrev, sellBandPrev: sellBandPrev, signal: signal,
+      buyBandNext: buyBandNext, sellBandNext: sellBandNext,
+      poolLimitPct: limit.buyPct, buyLimitAmt: buyLimitAmt,
+      spy: (input.spy !== "" && input.spy != null) ? Number(input.spy) : null,
+      qqq: (input.qqq !== "" && input.qqq != null) ? Number(input.qqq) : null
+    };
+  }
+
+  function round2(n){ return Math.round(n*100)/100; }
+  function fmtMoney(n){
+    if (n == null || isNaN(n)) return "–";
+    var sign = n < 0 ? "-" : "";
+    n = Math.abs(n);
+    return sign + "$" + n.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function fmtMoney0(n){
+    if (n == null || isNaN(n)) return "–";
+    return (n<0?"-":"") + "$" + Math.abs(Math.round(n)).toLocaleString("en-US");
+  }
+  function fmtPct(n, d){
+    if (n == null || isNaN(n)) return "–";
+    return n.toFixed(d==null?1:d) + "%";
+  }
+  function fmtDate(d){
+    var dt = new Date(d);
+    return (dt.getMonth()+1) + "/" + dt.getDate() + "/" + String(dt.getFullYear()).slice(2);
+  }
+  function typeChip(type){
+    var cls = type === "적립식" ? "chip-accum" : (type === "거치식" ? "chip-lump" : "chip-withdraw");
+    return '<span class="chip ' + cls + '">' + type + '</span>';
+  }
+
+  function instanceInitPseudoCycle(inst){
+    return { Vnext: inst.initV, Pool: inst.initPool, qty: inst.initQty, E: round2((inst.initQty||0) * (inst.initPrice||0)) };
+  }
+  function lastState(inst){
+    if (inst.cycles.length === 0) return instanceInitPseudoCycle(inst);
+    return inst.cycles[inst.cycles.length-1];
+  }
+  function totalValue(cycleOrInit){
+    return (cycleOrInit.E != null ? cycleOrInit.E : (cycleOrInit.qty||0)) + (cycleOrInit.Pool||0);
+  }
+
+  /* ---------------- rendering ---------------- */
+  var mainArea = document.getElementById("mainArea");
+  var instanceList = document.getElementById("instanceList");
+
+  function render(){
+    renderSidebar();
+    renderMain();
+  }
+
+  function renderSidebar(){
+    instanceList.innerHTML = "";
+    if (state.instances.length === 0){
+      var p = document.createElement("div");
+      p.className = "footnote";
+      p.style.padding = "8px 4px";
+      p.textContent = "아직 만든 VR 기수가 없어요.";
+      instanceList.appendChild(p);
+      return;
+    }
+    state.instances.forEach(function(inst){
+      var seg = currentSegment(inst, todayStr());
+      var last = lastState(inst);
+      var tot = totalValue(last);
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "instance-card" + (inst.id === state.selectedId ? " active" : "");
+      var progress = inst.goalAmount ? Math.min(100, (tot/inst.goalAmount)*100) : null;
+      card.innerHTML =
+        '<div class="row1"><span class="iname">' + escapeHtml(inst.name) + '</span>' + typeChip(seg.type) + '</div>' +
+        '<div class="meta"><span>' + escapeHtml(inst.ticker) + '</span><span class="num">' + fmtMoney0(tot) + '</span></div>' +
+        (progress != null ? '<div class="progress-track"><div class="progress-fill" style="width:' + progress.toFixed(0) + '%"></div></div>' : '');
+      card.addEventListener("click", function(){ state.selectedId = inst.id; saveState(); render(); });
+      instanceList.appendChild(card);
+    });
+  }
+
+  function todayStr(){
+    var d = new Date();
+    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+  }
+  function pad(n){ return n<10 ? "0"+n : ""+n; }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  function renderMain(){
+    mainArea.innerHTML = "";
+    var inst = state.instances.find(function(i){ return i.id === state.selectedId; });
+    if (!inst){
+      mainArea.innerHTML =
+        '<div class="empty-state">' +
+        '<h2>운용 중인 VR 기수를 선택하거나 새로 만들어보세요</h2>' +
+        '<p>적립식·거치식·인출식을 몇 개든 동시에 관리할 수 있어요. 사이클마다 결과를 입력하면 다음 매수가·매도가·매수한도가 자동으로 계산돼요.</p>' +
+        '<button class="btn btn-primary" id="emptyNewBtn" type="button">+ 새 VR 기수 만들기</button>' +
+        '</div>';
+      document.getElementById("emptyNewBtn").addEventListener("click", openNewInstanceModal);
+      return;
+    }
+    var seg = currentSegment(inst, todayStr());
+    var last = lastState(inst);
+    var G = currentG(inst, todayStr());
+    var limit = currentPoolLimit(inst, todayStr());
+    var band = inst.band;
+    var buyBand = round2(last.Vnext * band.low);
+    var sellBand = round2(last.Vnext * band.high);
+    var tot = totalValue(last);
+    var poolRatio = tot > 0 ? (last.Pool/tot*100) : 0;
+
+    var head = document.createElement("div");
+    head.innerHTML =
+      '<div class="detail-head">' +
+        '<div><h2>' + escapeHtml(inst.name) + ' ' + typeChip(seg.type) + '</h2>' +
+        '<div class="sub">' + escapeHtml(inst.ticker) + ' · 사이클 ' + inst.cycleDays + '일 · 밴드 ±' + ((band.high-1)*100).toFixed(0) + '% · 시작 ' + fmtDate(inst.initDate) + '</div></div>' +
+        '<div class="head-actions">' +
+          '<button class="btn btn-sm" id="switchTypeBtn" type="button">운용방식 전환</button>' +
+          '<button class="btn btn-sm btn-ghost btn-danger" id="deleteInstBtn" type="button">삭제</button>' +
+        '</div>' +
+      '</div>';
+    mainArea.appendChild(head);
+
+    var stats = document.createElement("div");
+    stats.className = "stat-strip";
+    stats.innerHTML =
+      stat("현재 V (기준값)", fmtMoney0(last.Vnext)) +
+      stat("평가금 E", fmtMoney0(last.E != null ? last.E : (last.qty * (inst.initPrice||0)))) +
+      stat("Pool (현금)", fmtMoney0(last.Pool)) +
+      stat("G값", G, true) +
+      stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
+      stat("매도 밴드 ↑", fmtMoney0(sellBand));
+    mainArea.appendChild(stats);
+
+    // cycle entry card
+    var entryCard = document.createElement("div");
+    entryCard.className = "card";
+    entryCard.innerHTML =
+      '<h3>새 사이클 입력</h3>' +
+      '<div class="card-desc">직전 사이클의 체결 결과(보유수량·현재가)와 이번 사이클 적립/인출금을 입력하면 다음 매수가·매도가·매수한도가 자동 계산돼요.</div>' +
+      '<div class="form-grid">' +
+        field("날짜", '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
+        field("현재가 ($)", '<input id="cy_price" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
+        field("현재 보유수량", '<input id="cy_qty" type="number" step="0.0001" value="' + last.qty + '" />') +
+        field(seg.type === "인출식" ? '이번 인출금 ($) <span class="hint">양수로 입력, 자동 차감돼요</span>' : "이번 적립금 ($)", '<input id="cy_deposit" type="number" step="0.01" value="0" />') +
+        field("SPY 종가 (선택)", '<input id="cy_spy" type="number" step="0.01" placeholder="비교차트용" />') +
+        field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" step="0.01" placeholder="비교차트용" />') +
+      '</div>' +
+      '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
+      '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 기록하기</button></div>';
+    mainArea.appendChild(entryCard);
+
+    // transition helper
+    var tcard = document.createElement("div");
+    tcard.className = "card";
+    var goalPct = inst.goalAmount ? Math.min(999, tot/inst.goalAmount*100) : null;
+    tcard.innerHTML =
+      '<h3>전환 시점 참고 지표</h3>' +
+      '<div class="card-desc">전환은 자동으로 되지 않아요 — 아래 숫자를 참고해서 직접 판단하고 위의 "운용방식 전환" 버튼을 눌러주세요.</div>' +
+      '<div class="transition-grid">' +
+        metricBox("목표 금액 대비 진행률", inst.goalAmount ? fmtPct(goalPct,1) : "목표 미설정", inst.goalAmount ? ("목표 " + fmtMoney0(inst.goalAmount)) : "새 기수 설정에서 목표 금액을 넣어보세요") +
+        metricBox("현재 Pool 비중", fmtPct(poolRatio,1), "거치식 권장 ≈50% · 인출식 권장 ≈75%") +
+        metricBoxWithdrawCalc(tot) +
+      '</div>';
+    mainArea.appendChild(tcard);
+    wireWithdrawCalc(tot);
+
+    // band chart
+    var chartCard1 = document.createElement("div");
+    chartCard1.className = "card";
+    chartCard1.innerHTML = '<h3>평가금 vs 매수·매도 밴드</h3><div class="card-desc">평가금(E)이 매수 밴드 아래로 내려가면 매수, 매도 밴드 위로 올라가면 매도 신호예요.</div><div id="bandChartHost"></div>';
+    mainArea.appendChild(chartCard1);
+    renderBandChart(document.getElementById("bandChartHost"), inst);
+
+    // comparison chart
+    var chartCard2 = document.createElement("div");
+    chartCard2.className = "card";
+    chartCard2.innerHTML = '<h3>같은 원금, SPY·QQQ 적립식과 비교</h3><div class="card-desc">사이클마다 입력한 적립금과 SPY·QQQ 종가를 이용해 "같은 돈을 SPY/QQQ에 적립식으로 넣었다면"을 계산해요. 가격을 입력하지 않은 구간은 직전 값으로 이어붙여요.</div><div id="cmpChartHost"></div>';
+    mainArea.appendChild(chartCard2);
+    renderComparisonChart(document.getElementById("cmpChartHost"), inst);
+
+    // history table
+    var histCard = document.createElement("div");
+    histCard.className = "card";
+    histCard.innerHTML = '<h3>사이클 기록</h3>' + renderHistoryTable(inst);
+    mainArea.appendChild(histCard);
+
+    // wire events
+    document.getElementById("switchTypeBtn").addEventListener("click", function(){ openSwitchTypeModal(inst); });
+    document.getElementById("deleteInstBtn").addEventListener("click", function(){
+      if (confirm(inst.name + "을(를) 삭제할까요? 되돌릴 수 없어요.")){
+        state.instances = state.instances.filter(function(i){ return i.id !== inst.id; });
+        state.selectedId = state.instances.length ? state.instances[0].id : null;
+        saveState(); render();
+      }
+    });
+
+    var priceEl = document.getElementById("cy_price"), qtyEl = document.getElementById("cy_qty"), depEl = document.getElementById("cy_deposit"), dateEl = document.getElementById("cy_date");
+    function signedDeposit(rawVal){
+      var d = parseFloat(rawVal) || 0;
+      var segNow = currentSegment(inst, dateEl.value || todayStr());
+      return segNow.type === "인출식" ? -Math.abs(d) : d;
+    }
+    function updatePreview(){
+      var price = parseFloat(priceEl.value), qty = parseFloat(qtyEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
+      var box = document.getElementById("cyPreview");
+      if (isNaN(price) || isNaN(qty) || !date){ box.style.display = "none"; return; }
+      var res = computeCycle(inst, last, {date:date, price:price, qty:qty, deposit:dep, spy:"", qqq:""});
+      box.style.display = "flex";
+      var sigCls = res.signal === "buy" ? "signal-buy" : (res.signal === "sell" ? "signal-sell" : "signal-hold");
+      var sigTxt = res.signal === "buy" ? "매수 신호" : (res.signal === "sell" ? "매도 신호" : "홀드");
+      box.innerHTML =
+        '<span class="signal-badge ' + sigCls + '"><span class="dot"></span>' + sigTxt + '</span>' +
+        '<span>다음 V <b>' + fmtMoney0(res.Vnext) + '</b></span>' +
+        '<span>다음 매수 밴드 <b>' + fmtMoney0(res.buyBandNext) + '</b></span>' +
+        '<span>다음 매도 밴드 <b>' + fmtMoney0(res.sellBandNext) + '</b></span>' +
+        '<span>G <b>' + res.G + '</b></span>' +
+        '<span>매수한도 <b>' + fmtMoney0(res.buyLimitAmt) + '</b> (' + res.poolLimitPct.toFixed(0) + '%)</span>';
+    }
+    [priceEl, qtyEl, depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
+
+    document.getElementById("cy_submit").addEventListener("click", function(){
+      var price = parseFloat(priceEl.value), qty = parseFloat(qtyEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
+      var spyEl = document.getElementById("cy_spy"), qqqEl = document.getElementById("cy_qqq");
+      if (isNaN(price) || price<=0 || !date){ alert("날짜와 현재가는 필수예요."); return; }
+      if (isNaN(qty)) { alert("보유수량을 입력해주세요."); return; }
+      var res = computeCycle(inst, last, {date:date, price:price, qty:qty, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
+      inst.cycles.push(res);
+      inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+      saveState();
+      render();
+    });
+  }
+
+  function suggestedDate(inst){
+    var last = inst.cycles.length ? inst.cycles[inst.cycles.length-1] : null;
+    var base = last ? new Date(last.date) : new Date(inst.initDate);
+    var d = new Date(base.getTime() + inst.cycleDays*86400000);
+    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+  }
+
+  function stat(label, value, isPlain){
+    return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (isPlain?"":"num") + '">' + value + '</div></div>';
+  }
+  function field(label, inputHtml){
+    return '<div class="field"><label>' + label + '</label>' + inputHtml + '</div>';
+  }
+  function metricBox(label, value, note){
+    return '<div class="metric-box"><div class="m-label">' + label + '</div><div class="m-value num">' + value + '</div><div class="m-note">' + note + '</div></div>';
+  }
+  function metricBoxWithdrawCalc(tot){
+    return '<div class="metric-box">' +
+      '<div class="m-label">인출식 전환 시 예상 연 인출률</div>' +
+      '<div class="withdraw-check-row">' +
+        '<div class="field"><label style="font-size:11px;">희망 월 인출액 ($)</label><input id="wCalcInput" type="number" step="1" placeholder="예: 300" /></div>' +
+        '<div class="m-value num" id="wCalcOut" style="min-width:70px;">–</div>' +
+      '</div>' +
+      '<div class="m-note" id="wCalcNote">참고용 계산이에요. 일반적으로 알려진 안전인출률(연 3.5~4%대)보다 높으면 지속가능성을 다시 점검해보세요. 투자자문이 아니라 구조적 참고치예요.</div>' +
+      '</div>';
+  }
+  function wireWithdrawCalc(tot){
+    var i = document.getElementById("wCalcInput");
+    if (!i) return;
+    i.addEventListener("input", function(){
+      var v = parseFloat(i.value);
+      var out = document.getElementById("wCalcOut");
+      if (isNaN(v) || v<=0){ out.textContent = "–"; out.style.color = ""; return; }
+      var rate = (v*12)/tot*100;
+      out.textContent = rate.toFixed(1) + "%";
+      out.style.color = rate>5 ? "var(--sell)" : (rate>4 ? "var(--accent)" : "var(--buy)");
+    });
+  }
+
+  function renderHistoryTable(inst){
+    if (inst.cycles.length === 0){
+      return '<div class="chart-empty">아직 기록된 사이클이 없어요. 위에서 첫 사이클을 입력해보세요.</div>';
+    }
+    var rows = inst.cycles.slice().reverse().map(function(c){
+      var sigCls = c.signal === "buy" ? "signal-buy" : (c.signal === "sell" ? "signal-sell" : "signal-hold");
+      var sigTxt = c.signal === "buy" ? "매수" : (c.signal === "sell" ? "매도" : "홀드");
+      return '<tr>' +
+        '<td>' + fmtDate(c.date) + '</td>' +
+        '<td><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
+        '<td class="num">' + fmtMoney(c.price) + '</td>' +
+        '<td class="num">' + c.qty + '</td>' +
+        '<td class="num">' + fmtMoney0(c.E) + '</td>' +
+        '<td class="num">' + fmtMoney0(c.deposit) + '</td>' +
+        '<td class="num">' + c.G + '</td>' +
+        '<td class="num">' + fmtMoney0(c.Vnext) + '</td>' +
+        '<td class="num">' + fmtMoney0(c.buyBandNext) + '</td>' +
+        '<td class="num">' + fmtMoney0(c.sellBandNext) + '</td>' +
+        '<td class="num">' + fmtMoney0(c.Pool) + '</td>' +
+        '</tr>';
+    }).join("");
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>날짜</th><th>신호</th><th class="num">가격</th><th class="num">수량</th><th class="num">평가금 E</th>' +
+      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  /* ---------------- charts (hand-rolled SVG) ---------------- */
+  function svgEl(tag, attrs){
+    var el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+  function cssVar(name){
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function renderBandChart(host, inst){
+    host.innerHTML = "";
+    var points = inst.cycles;
+    if (points.length === 0){
+      host.innerHTML = '<div class="chart-empty">사이클을 입력하면 그래프가 나타나요.</div>';
+      return;
+    }
+    var legend = document.createElement("div");
+    legend.className = "legend";
+    legend.innerHTML =
+      '<span class="item"><span class="swatch area" style="background:' + cssVar('--muted') + '"></span>매수~매도 밴드</span>' +
+      '<span class="item"><span class="swatch" style="background:' + cssVar('--ink-soft') + '"></span>V (기준값)</span>' +
+      '<span class="item"><span class="swatch" style="background:' + cssVar('--s-vr') + '"></span>평가금 E</span>' +
+      '<span class="item"><span class="swatch dot" style="background:' + cssVar('--buy') + '"></span>매수 체결</span>' +
+      '<span class="item"><span class="swatch dot" style="background:' + cssVar('--sell') + '"></span>매도 체결</span>';
+    host.appendChild(legend);
+
+    var W = host.clientWidth || 900, H = 300, pad = {l:56,r:16,t:14,b:28};
+    var wrap = document.createElement("div"); wrap.className = "chart-wrap";
+    var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
+    wrap.appendChild(svg);
+    var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
+    host.appendChild(wrap);
+
+    var dates = points.map(function(p){ return new Date(p.date).getTime(); });
+    var minD = Math.min.apply(null, dates), maxD = Math.max.apply(null, dates);
+    if (minD === maxD) maxD = minD + 86400000;
+    var vals = [];
+    points.forEach(function(p){ vals.push(p.E, p.Vnext, p.buyBandNext, p.sellBandNext); });
+    var minV = Math.min.apply(null, vals) * 0.92, maxV = Math.max.apply(null, vals) * 1.06;
+
+    function x(t){ return pad.l + (t-minD)/(maxD-minD) * (W-pad.l-pad.r); }
+    function y(v){ return H-pad.b - (v-minV)/(maxV-minV) * (H-pad.t-pad.b); }
+
+    // gridlines
+    var gridN = 4;
+    for (var i=0;i<=gridN;i++){
+      var gv = minV + (maxV-minV)*i/gridN;
+      var gy = y(gv);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
+      var lbl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
+      lbl.textContent = "$" + Math.round(gv).toLocaleString();
+      svg.appendChild(lbl);
+    }
+
+    // band area
+    var bandPathTop = points.map(function(p,i){ return (i===0?"M":"L") + x(new Date(p.date).getTime()) + "," + y(p.sellBandNext); }).join(" ");
+    var bandPathBottom = points.slice().reverse().map(function(p){ return "L" + x(new Date(p.date).getTime()) + "," + y(p.buyBandNext); }).join(" ");
+    svg.appendChild(svgEl("path", {d: bandPathTop + " " + bandPathBottom + " Z", fill: cssVar('--muted'), opacity:0.13, stroke:"none"}));
+
+    function linePath(key){
+      return points.map(function(p,i){ return (i===0?"M":"L") + x(new Date(p.date).getTime()) + "," + y(p[key]); }).join(" ");
+    }
+    svg.appendChild(svgEl("path", {d: linePath("Vnext"), fill:"none", stroke:cssVar('--ink-soft'), "stroke-width":1.5, "stroke-dasharray":"4 3"}));
+    svg.appendChild(svgEl("path", {d: linePath("E"), fill:"none", stroke:cssVar('--s-vr'), "stroke-width":2.5, "stroke-linecap":"round", "stroke-linejoin":"round"}));
+
+    points.forEach(function(p){
+      var cx = x(new Date(p.date).getTime()), cy = y(p.E);
+      var color = p.signal === "buy" ? cssVar('--buy') : (p.signal === "sell" ? cssVar('--sell') : cssVar('--s-vr'));
+      var r = p.signal === "hold" ? 3 : 5;
+      var c = svgEl("circle", {cx:cx, cy:cy, r:r, fill:color, stroke:cssVar('--panel'), "stroke-width":1.5, style:"cursor:pointer;"});
+      c.addEventListener("mousemove", function(ev){ showTip(ev, wrap, tooltip, p); });
+      c.addEventListener("mouseleave", function(){ tooltip.style.opacity = 0; });
+      svg.appendChild(c);
+    });
+
+    function showTip(ev, wrap, tooltip, p){
+      var r = wrap.getBoundingClientRect();
+      tooltip.style.left = (ev.clientX - r.left) + "px";
+      tooltip.style.top = (ev.clientY - r.top) + "px";
+      tooltip.style.opacity = 1;
+      tooltip.innerHTML = "<b>" + fmtDate(p.date) + "</b><br/>E " + fmtMoney0(p.E) + " · V " + fmtMoney0(p.Vnext) + "<br/>밴드 " + fmtMoney0(p.buyBandNext) + " ~ " + fmtMoney0(p.sellBandNext);
+    }
+  }
+
+  function renderComparisonChart(host, inst){
+    host.innerHTML = "";
+    var points = inst.cycles;
+    if (points.length === 0){
+      host.innerHTML = '<div class="chart-empty">사이클을 입력하면 그래프가 나타나요.</div>';
+      return;
+    }
+    var hasAnyPrice = points.some(function(p){ return p.spy != null || p.qqq != null; });
+    var legend = document.createElement("div");
+    legend.className = "legend";
+    legend.innerHTML =
+      '<span class="item"><span class="swatch" style="background:' + cssVar('--s-vr') + '"></span>VR 전략 (평가금+Pool)</span>' +
+      '<span class="item"><span class="swatch" style="background:' + cssVar('--s-spy') + '"></span>SPY 적립식 (동일 입금액)</span>' +
+      '<span class="item"><span class="swatch" style="background:' + cssVar('--s-qqq') + '"></span>QQQ 적립식 (동일 입금액)</span>';
+    host.appendChild(legend);
+    if (!hasAnyPrice){
+      var warn = document.createElement("div");
+      warn.className = "footnote";
+      warn.style.marginBottom = "8px";
+      warn.textContent = "SPY·QQQ 종가를 사이클 입력에서 넣어주면 이 그래프가 채워져요.";
+      host.appendChild(warn);
+    }
+
+    // simulate DCA
+    var spyShares = 0, qqqShares = 0, lastSpy = null, lastQqq = null;
+    var series = points.map(function(p, idx){
+      var dep = (idx===0 ? inst.initPool + inst.initQty*(points[0].price||0) : p.deposit);
+      // for first point, treat initial lump/qty value as the "principal" moment; subsequent = incremental deposit only
+      var depositAmt = idx===0 ? (inst.initPool + (inst.initQty||0)*(p.price||0)) : Math.max(0, p.deposit||0);
+      if (p.spy != null) lastSpy = p.spy;
+      if (p.qqq != null) lastQqq = p.qqq;
+      if (lastSpy) spyShares += depositAmt / lastSpy;
+      if (lastQqq) qqqShares += depositAmt / lastQqq;
+      var vrTotal = totalValue(p);
+      return {
+        date: p.date,
+        vr: vrTotal,
+        spy: lastSpy ? spyShares*lastSpy : null,
+        qqq: lastQqq ? qqqShares*lastQqq : null
+      };
+    });
+
+    var W = host.clientWidth || 900, H = 300, pad = {l:64,r:16,t:14,b:28};
+    var wrap = document.createElement("div"); wrap.className = "chart-wrap";
+    var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
+    wrap.appendChild(svg);
+    var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
+    host.appendChild(wrap);
+
+    var dates = series.map(function(p){ return new Date(p.date).getTime(); });
+    var minD = Math.min.apply(null, dates), maxD = Math.max.apply(null, dates);
+    if (minD === maxD) maxD = minD + 86400000;
+    var vals = [0];
+    series.forEach(function(p){ vals.push(p.vr); if(p.spy!=null) vals.push(p.spy); if(p.qqq!=null) vals.push(p.qqq); });
+    var minV = 0, maxV = Math.max.apply(null, vals) * 1.08 || 100;
+
+    function x(t){ return pad.l + (t-minD)/(maxD-minD) * (W-pad.l-pad.r); }
+    function y(v){ return H-pad.b - (v-minV)/(maxV-minV) * (H-pad.t-pad.b); }
+
+    for (var i=0;i<=4;i++){
+      var gv = minV + (maxV-minV)*i/4;
+      var gy = y(gv);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
+      var lbl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
+      lbl.textContent = "$" + Math.round(gv).toLocaleString();
+      svg.appendChild(lbl);
+    }
+
+    function linePath(key, colorVar){
+      var d = "", started = false;
+      series.forEach(function(p){
+        var v = p[key];
+        if (v == null){ started = false; return; }
+        var cx = x(new Date(p.date).getTime()), cy = y(v);
+        d += (started ? "L" : "M") + cx + "," + cy + " ";
+        started = true;
+      });
+      return d;
+    }
+    svg.appendChild(svgEl("path", {d: linePath("spy"), fill:"none", stroke:cssVar('--s-spy'), "stroke-width":2, "stroke-linecap":"round"}));
+    svg.appendChild(svgEl("path", {d: linePath("qqq"), fill:"none", stroke:cssVar('--s-qqq'), "stroke-width":2, "stroke-linecap":"round"}));
+    svg.appendChild(svgEl("path", {d: linePath("vr"), fill:"none", stroke:cssVar('--s-vr'), "stroke-width":2.75, "stroke-linecap":"round"}));
+
+    // endpoint markers + hover targets
+    series.forEach(function(p, idx){
+      var cx = x(new Date(p.date).getTime());
+      var hitW = (W-pad.l-pad.r)/series.length;
+      var hitRect = svgEl("rect", {x:cx-hitW/2, y:pad.t, width:hitW, height:H-pad.t-pad.b, fill:"transparent"});
+      hitRect.addEventListener("mousemove", function(ev){
+        var r = wrap.getBoundingClientRect();
+        tooltip.style.left = (ev.clientX - r.left) + "px";
+        tooltip.style.top = (ev.clientY - r.top) + "px";
+        tooltip.style.opacity = 1;
+        tooltip.innerHTML = "<b>" + fmtDate(p.date) + "</b><br/>VR " + fmtMoney0(p.vr) +
+          (p.spy!=null ? "<br/>SPY " + fmtMoney0(p.spy) : "") +
+          (p.qqq!=null ? "<br/>QQQ " + fmtMoney0(p.qqq) : "");
+      });
+      hitRect.addEventListener("mouseleave", function(){ tooltip.style.opacity = 0; });
+      svg.appendChild(hitRect);
+      if (idx === series.length-1){
+        [["vr","--s-vr"],["spy","--s-spy"],["qqq","--s-qqq"]].forEach(function(pair){
+          var v = p[pair[0]];
+          if (v==null) return;
+          svg.appendChild(svgEl("circle", {cx:cx, cy:y(v), r:4, fill:cssVar(pair[1])}));
+        });
+      }
+    });
+  }
+
+  /* ---------------- modals ---------------- */
+  var newModal = document.getElementById("newInstanceModal");
+  function openNewInstanceModal(){
+    document.getElementById("ni_name").value = "";
+    document.getElementById("ni_type").value = "적립식";
+    document.getElementById("ni_ticker").value = "TQQQ";
+    document.getElementById("ni_date").value = todayStr();
+    document.getElementById("ni_cycledays").value = 14;
+    document.getElementById("ni_v").value = "";
+    document.getElementById("ni_pool").value = "";
+    document.getElementById("ni_qty").value = 0;
+    document.getElementById("ni_price").value = "";
+    document.getElementById("ni_g").value = 10;
+    document.getElementById("ni_goal").value = "";
+    document.getElementById("ni_band").value = 15;
+    newModal.classList.remove("hidden");
+  }
+  document.getElementById("newInstanceBtn").addEventListener("click", openNewInstanceModal);
+  document.getElementById("ni_cancel").addEventListener("click", function(){ newModal.classList.add("hidden"); });
+  document.getElementById("ni_type").addEventListener("change", function(){
+    var t = this.value;
+    document.getElementById("ni_g").value = TYPE_DEFAULTS[t].startG;
+  });
+  document.getElementById("ni_create").addEventListener("click", function(){
+    var name = document.getElementById("ni_name").value.trim();
+    var type = document.getElementById("ni_type").value;
+    var ticker = document.getElementById("ni_ticker").value.trim() || "TQQQ";
+    var date = document.getElementById("ni_date").value;
+    var cycleDays = parseInt(document.getElementById("ni_cycledays").value,10) || 14;
+    var v = parseFloat(document.getElementById("ni_v").value);
+    var pool = parseFloat(document.getElementById("ni_pool").value);
+    var qty = parseFloat(document.getElementById("ni_qty").value) || 0;
+    var price = parseFloat(document.getElementById("ni_price").value) || 0;
+    var g = parseFloat(document.getElementById("ni_g").value) || TYPE_DEFAULTS[type].startG;
+    var goal = parseFloat(document.getElementById("ni_goal").value);
+    var bandPct = parseFloat(document.getElementById("ni_band").value) || 15;
+    if (!name || !date || isNaN(v) || isNaN(pool)){
+      alert("이름, 시작일, 시작 V, 시작 Pool은 필수예요.");
+      return;
+    }
+    var inst = {
+      id: uid(), name: name, ticker: ticker, cycleDays: cycleDays,
+      initDate: date, initV: v, initPool: pool, initQty: qty, initPrice: price,
+      goalAmount: isNaN(goal) ? null : goal,
+      band: { low: 1 - bandPct/100, high: 1 + bandPct/100 },
+      typeSegments: [ { type: type, startDate: date, startG: g } ],
+      cycles: []
+    };
+    state.instances.push(inst);
+    state.selectedId = inst.id;
+    saveState();
+    newModal.classList.add("hidden");
+    render();
+  });
+
+  var switchModal = document.getElementById("switchTypeModal");
+  var switchTargetInst = null;
+  function openSwitchTypeModal(inst){
+    switchTargetInst = inst;
+    var seg = currentSegment(inst, todayStr());
+    var order = ["적립식","거치식","인출식"];
+    var opts = order.filter(function(t){ return t !== seg.type; });
+    var optsHost = document.getElementById("switchOptions");
+    optsHost.innerHTML = opts.map(function(t, i){
+      return '<label class="type-opt' + (i===0?" selected":"") + '"><span>' + t + '</span><input type="radio" name="swType" value="' + t + '" ' + (i===0?"checked":"") + ' /></label>';
+    }).join("");
+    Array.prototype.forEach.call(optsHost.querySelectorAll(".type-opt"), function(el){
+      el.addEventListener("click", function(){
+        Array.prototype.forEach.call(optsHost.querySelectorAll(".type-opt"), function(o){ o.classList.remove("selected"); });
+        el.classList.add("selected");
+        el.querySelector("input").checked = true;
+        document.getElementById("sw_g").value = TYPE_DEFAULTS[el.querySelector("input").value].startG;
+      });
+    });
+    document.getElementById("sw_date").value = todayStr();
+    document.getElementById("sw_g").value = TYPE_DEFAULTS[opts[0]].startG;
+    switchModal.classList.remove("hidden");
+  }
+  document.getElementById("sw_cancel").addEventListener("click", function(){ switchModal.classList.add("hidden"); });
+  document.getElementById("sw_confirm").addEventListener("click", function(){
+    var checked = document.querySelector('input[name="swType"]:checked');
+    if (!checked) return;
+    var date = document.getElementById("sw_date").value;
+    var g = parseFloat(document.getElementById("sw_g").value) || TYPE_DEFAULTS[checked.value].startG;
+    switchTargetInst.typeSegments.push({ type: checked.value, startDate: date, startG: g });
+    switchTargetInst.typeSegments.sort(function(a,b){ return new Date(a.startDate)-new Date(b.startDate); });
+    saveState();
+    switchModal.classList.add("hidden");
+    render();
+  });
+
+  /* ---------------- export / import ---------------- */
+  document.getElementById("exportBtn").addEventListener("click", async function(){
+    var data = JSON.stringify(state, null, 2);
+    var filename = "vr-tracker-backup-" + todayStr() + ".json";
+    try {
+      var downloads = (window.claude && window.claude.use) ? await window.claude.use("downloads") : null;
+      if (downloads){
+        await downloads.save({ filename: filename, data: data });
+        return;
+      }
+    } catch(e){ /* fall through to manual */ }
+    // fallback: open a blob link
+    var blob = new Blob([data], {type:"application/json"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  });
+  document.getElementById("importBtn").addEventListener("click", function(){
+    document.getElementById("importFile").click();
+  });
+  document.getElementById("importFile").addEventListener("change", function(ev){
+    var file = ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try {
+        var parsed = JSON.parse(reader.result);
+        if (!parsed.instances) throw new Error("bad format");
+        if (!confirm("현재 데이터를 불러온 백업으로 덮어쓸까요?")) return;
+        state = parsed;
+        saveState();
+        render();
+      } catch(e){
+        alert("파일을 읽을 수 없어요. 올바른 백업 파일인지 확인해주세요.");
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  /* ---------------- theme ---------------- */
+  var themeBtn = document.getElementById("themeToggle");
+  function applyThemeLabel(){
+    var t = document.documentElement.getAttribute("data-theme");
+    themeBtn.textContent = t === "dark" ? "다크" : (t === "light" ? "라이트" : "자동");
+  }
+  themeBtn.addEventListener("click", function(){
+    var cur = document.documentElement.getAttribute("data-theme");
+    var next = cur === "dark" ? "light" : (cur === "light" ? null : "dark");
+    if (next) document.documentElement.setAttribute("data-theme", next);
+    else document.documentElement.removeAttribute("data-theme");
+    applyThemeLabel();
+  });
+  applyThemeLabel();
+
+  /* ---------------- init ---------------- */
+  window.addEventListener("resize", function(){ render(); });
+  render();
+})();
+</script>
