@@ -382,6 +382,10 @@
         <label>매수/매도 밴드 (%)</label>
         <input id="ni_band" type="number" value="15" />
       </div>
+      <div class="field">
+        <label>분할 수량 (주) <span class="hint">라오어 기본단위 1개씩 × 내 배수</span></label>
+        <input id="ni_tranche" type="number" step="1" min="1" value="1" />
+      </div>
       <div class="field" style="grid-column:1/3;">
         <label>Pool 매수한도 방식 <span class="hint">만든 뒤에도 "Pool 한도 설정" 버튼으로 언제든 다시 바꿀 수 있어요</span></label>
         <select id="ni_pl_mode">
@@ -990,9 +994,11 @@
       '<h3>새 사이클 입력</h3>' +
       '<div class="card-desc">아래 주문표대로 매매했다면 그 결과를, 안 했다면(홀드) 오늘 종가와 기존 보유수량 그대로를 그 아래 입력칸 4개에 입력하세요. 그러면 다음 사이클의 매수가·매도가·매수한도가 자동으로 다시 계산돼요.</div>' +
       '<h3 style="margin-top:16px;font-size:14px;">지금 걸어둘 주문표</h3>' +
-      '<div class="card-desc">라오어 실제 중계표 방식 그대로예요 — 밴드가에서 시작해서 ' + TRANCHE_SIZE + '주씩 체결됐다고 가정하며 다음 단계 가격을 다시 계산(밴드금액÷그때까지 수량)해서, 가격이 계속 불리한 방향으로 갈 때를 대비한 지정가(limit) 주문들을 미리 걸어두는 표예요. 매수는 매수한도(Pool%) 안에서, 매도는 E가 V로 돌아오는 지점까지예요.' +
+      '<div class="card-desc">라오어 실제 중계표 방식 그대로예요 — 밴드가에서 시작해서 매 단계 정해진 수량씩 체결됐다고 가정하며 다음 단계 가격을 다시 계산(밴드금액÷그때까지 수량)해서, 가격이 계속 불리한 방향으로 갈 때를 대비한 지정가(limit) 주문들을 미리 걸어두는 표예요. 매수는 매수한도(Pool%) 안에서, 매도는 E가 V로 돌아오는 지점까지예요. 라오어 기본 단위는 "1개씩"이고, 계좌 크기에 맞게 직접 배수를 정해서 쓰시면 돼요.' +
         (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ', 표 계산에는 안 쓰여요)</span>') : '') +
       '</div>' +
+      '<div class="field" style="max-width:220px;margin-bottom:12px;"><label>분할 수량 (주, 직접입력)</label>' +
+        '<input id="trancheSizeInput" type="number" step="1" min="1" class="cell-input" style="width:100%;" value="' + (inst.trancheSize || DEFAULT_TRANCHE_SIZE) + '" /></div>' +
       renderOrderTable(inst, last, buyBand, sellBand, limit) +
       '<div class="preview-band" style="display:none;">' +
         '<span><b>지금 활성화된 밴드</b></span>' +
@@ -1011,6 +1017,13 @@
       '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
       '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 기록하기</button></div>';
     mainArea.appendChild(entryCard);
+
+    document.getElementById("trancheSizeInput").addEventListener("change", function(){
+      var v = parseInt(this.value, 10);
+      inst.trancheSize = (v > 0) ? v : DEFAULT_TRANCHE_SIZE;
+      saveState();
+      render();
+    });
 
     // transition helper
     var tcard = document.createElement("div");
@@ -1375,28 +1388,28 @@
     });
   }
 
-  var TRANCHE_SIZE = 8; // shares per rung, matches 라오어's actual 중계표 ("8개씩")
+  var DEFAULT_TRANCHE_SIZE = 1; // 라오어's own 중계표 base unit is always "1개씩" — the account owner then personally scales it (e.g. "2배", "5배") to fit their own capital size, so this is a per-VR setting, not a derivable formula
 
   // Reproduces the real 중계표 mechanic: each rung's price is the band dollar
   // amount divided by the share count held BEFORE that rung (buyBand/q or
   // sellBand/q) — not linear interpolation across a price range. Since q
-  // grows (buy) or shrinks (sell) by TRANCHE_SIZE each rung, the trigger
+  // grows (buy) or shrinks (sell) by trancheSize each rung, the trigger
   // price naturally steps away from the band on its own; the ladder starts
   // exactly AT the band price and extends further in the adverse direction.
   // `canAfford(cumulativeQty, cost)` decides whether to include the next
   // rung; returning false stops the ladder there.
-  function buildBandLadder(startQty, bandDollar, direction, canAfford){
+  function buildBandLadder(startQty, bandDollar, direction, trancheSize, canAfford){
     var tranches = [];
     var q = startQty;
     var spent = 0;
     for (var i=0; i<2000; i++){
-      if (direction < 0 && q - TRANCHE_SIZE < 0) break;
+      if (direction < 0 && q - trancheSize < 0) break;
       var price = bandDollar / q;
-      var cost = TRANCHE_SIZE * price;
-      if (!canAfford(tranches.length * TRANCHE_SIZE + TRANCHE_SIZE, spent + cost)) break;
-      tranches.push({ price: round2(price), qty: TRANCHE_SIZE });
+      var cost = trancheSize * price;
+      if (!canAfford(tranches.length * trancheSize + trancheSize, spent + cost)) break;
+      tranches.push({ price: round2(price), qty: trancheSize });
       spent += cost;
-      q += direction * TRANCHE_SIZE;
+      q += direction * trancheSize;
     }
     return tranches;
   }
@@ -1405,6 +1418,7 @@
     var qty = last.qty || 0;
     var V = last.Vnext;
     var buyLimitAmt = round2(last.Pool * (limit.buyPct/100));
+    var trancheSize = inst.trancheSize || DEFAULT_TRANCHE_SIZE;
     var buyTranches = [], sellTranches = [], note = "";
 
     if (qty > 0){
@@ -1413,15 +1427,15 @@
       // Don't buy past the point where E would already be restored to V,
       // even if the pool limit would allow more.
       var maxBuyQty = Math.floor(Math.max(0, (V - buyBand) / buyPriceInit));
-      buyTranches = buildBandLadder(qty, buyBand, +1, function(cumQty, cumSpent){
+      buyTranches = buildBandLadder(qty, buyBand, +1, trancheSize, function(cumQty, cumSpent){
         return cumQty <= maxBuyQty && cumSpent <= buyLimitAmt;
       });
-      var boughtQty = buyTranches.length * TRANCHE_SIZE;
+      var boughtQty = buyTranches.length * trancheSize;
       if (boughtQty < maxBuyQty) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 수량보다 적게 매수돼요.';
 
       // Sell has no pool-based limit — only stop once E would be restored to V.
       var maxSellQty = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPriceInit), qty));
-      sellTranches = buildBandLadder(qty, sellBand, -1, function(cumQty){
+      sellTranches = buildBandLadder(qty, sellBand, -1, trancheSize, function(cumQty){
         return cumQty <= maxSellQty;
       });
     } else {
@@ -1724,6 +1738,7 @@
     document.getElementById("ni_g").value = 10;
     document.getElementById("ni_goal").value = "";
     document.getElementById("ni_band").value = 15;
+    document.getElementById("ni_tranche").value = 1;
     applyPoolLimitDefaultsToNiForm("적립식");
     newModal.classList.remove("hidden");
   }
@@ -1754,6 +1769,7 @@
     var g = parseFloat(document.getElementById("ni_g").value) || TYPE_DEFAULTS[type].startG;
     var goal = parseFloat(document.getElementById("ni_goal").value);
     var bandPct = parseFloat(document.getElementById("ni_band").value) || 15;
+    var trancheSize = parseInt(document.getElementById("ni_tranche").value, 10) || 1;
     var poolLimitConfig = {
       mode: document.getElementById("ni_pl_mode").value,
       basePct: parseFloat(document.getElementById("ni_pl_base").value) || 75,
@@ -1773,6 +1789,7 @@
       band: { low: 1 - bandPct/100, high: 1 + bandPct/100 },
       typeSegments: [ { type: type, startDate: date, startG: g } ],
       poolLimitConfig: poolLimitConfig,
+      trancheSize: trancheSize,
       cycles: []
     };
     state.instances.push(inst);
