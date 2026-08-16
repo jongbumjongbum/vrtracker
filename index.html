@@ -882,6 +882,30 @@
     return { qty: qty, avgCost: qty > 0 ? cost/qty : 0, realizedPL: realizedPL };
   }
 
+  // 실제평단 (inst.realAvgCost) is a manual correction the user types in once,
+  // for when the formula's own 실효평단 has drifted from their real account.
+  // From that point on, each new cycle's fills should update it the same way
+  // a real avg-cost basis moves — this walks just THIS cycle's fills against
+  // the last known real-avg-cost qty (or last.qty if never tracked before).
+  function applyFillsToRealAvgCost(inst, fills, priorQty){
+    if (inst.realAvgCost == null) return;
+    var qty = (inst.realAvgCostQty != null) ? inst.realAvgCostQty : priorQty;
+    var cost = qty * inst.realAvgCost;
+    fills.forEach(function(f){
+      if (f.type === "buy"){
+        cost += f.qty * f.price;
+        qty += f.qty;
+      } else if (qty > 0){
+        var avg = cost / qty;
+        var sq = Math.min(f.qty, qty);
+        qty -= sq;
+        cost = avg * Math.max(0, qty);
+      }
+    });
+    inst.realAvgCostQty = qty;
+    if (qty > 0) inst.realAvgCost = round2(cost/qty);
+  }
+
   function normalizeState(){
     if (!state.instances) state.instances = [];
     if (state.selectedId === undefined) state.selectedId = null;
@@ -1270,7 +1294,7 @@
       stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
       stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
       stat("실현손익 (지금까지 매도로 확정된 손익)", fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
-      '<div class="stat"><div class="label">실제평단 (직접입력)</div>' +
+      '<div class="stat"><div class="label">실제평단 (직접입력, 이후 사이클 체결이 자동 반영돼요)</div>' +
         '<input id="realAvgCostInput" type="number" step="0.01" class="cell-input" style="width:100%;" ' +
         'value="' + (realAvg != null ? realAvg : "") + '" placeholder="예: 45.20" /></div>' +
       stat("손익 (실제평단 기준)", pnlStr(realProfit, realProfitPct), false, pnlColor(realProfit));
@@ -1280,6 +1304,7 @@
     realAvgInput.addEventListener("change", function(){
       var v = parseFloat(this.value);
       inst.realAvgCost = isNaN(v) ? null : v;
+      inst.realAvgCostQty = isNaN(v) ? null : last.qty;
       saveState();
       render();
     });
@@ -1447,6 +1472,7 @@
         if (!confirm("수량이나 가격이 비어있는 체결 항목이 있어요. 그건 빼고 기록할까요?")) return;
       }
       var res = computeCycle(inst, last, {date:date, closePrice:close, fills:fills, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
+      applyFillsToRealAvgCost(inst, fills, last.qty);
       inst.cycles.push(res);
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
       saveState();
