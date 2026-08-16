@@ -345,6 +345,8 @@
   .approval-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .approval-row:last-child { border-bottom: none; }
   .approval-row .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .approval-section-title { font-size: 12px; color: var(--muted); font-weight: 600; margin: 14px 0 4px; }
+  .approval-section-title:first-child { margin-top: 0; }
 
   .mode-switch, .currency-toggle { display: flex; gap: 4px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
   .mode-switch button, .currency-toggle button {
@@ -597,7 +599,7 @@
 
 <div class="modal-overlay hidden" id="approvalModal">
   <div class="modal">
-    <h3>가입 승인</h3>
+    <h3>회원 관리</h3>
     <div id="approvalList"><div class="footnote">불러오는 중...</div></div>
     <div class="form-actions">
       <button class="btn btn-ghost" id="approvalCloseBtn" type="button">닫기</button>
@@ -700,40 +702,69 @@
       btn.textContent = count > 0 ? ("승인 대기 " + count + "명") : "승인 대기 없음";
     } catch(e){ console.error("refreshPendingCount failed", e); }
   }
+  function makeApprovalRow(row, opts){
+    var item = document.createElement("div");
+    item.className = "approval-row";
+    var span = document.createElement("span");
+    span.className = "email";
+    span.textContent = row.email || row.id;
+    item.appendChild(span);
+    if (opts && opts.showApproveBtn){
+      var btn = document.createElement("button");
+      btn.className = "btn btn-primary";
+      btn.type = "button";
+      btn.textContent = "승인";
+      btn.addEventListener("click", async function(){
+        btn.disabled = true;
+        btn.textContent = "승인 중...";
+        var upd = await sb.from("profiles").update({ approved: true }).eq("id", row.id);
+        if (upd.error){ alert("승인 실패: " + upd.error.message); btn.disabled = false; btn.textContent = "승인"; return; }
+        refreshPendingCount();
+        openApprovalModal();
+      });
+      item.appendChild(btn);
+    }
+    return item;
+  }
   async function openApprovalModal(){
     var modal = document.getElementById("approvalModal");
     var list = document.getElementById("approvalList");
     modal.classList.remove("hidden");
     list.innerHTML = "<div class=\"footnote\">불러오는 중...</div>";
     try {
-      var res = await sb.from("profiles").select("id, email, created_at").eq("approved", false).neq("email", ADMIN_EMAIL).order("created_at", { ascending: true });
+      var res = await sb.from("profiles").select("id, email, approved, created_at").neq("email", ADMIN_EMAIL).order("created_at", { ascending: true });
       if (res.error){ list.innerHTML = "<div class=\"footnote\">목록을 불러오지 못했어요.</div>"; return; }
       var rows = res.data || [];
-      if (!rows.length){ list.innerHTML = "<div class=\"footnote\">승인 대기 중인 신청이 없어요.</div>"; return; }
+      var pending = rows.filter(function(r){ return !r.approved; });
+      var approvedRows = rows.filter(function(r){ return r.approved; });
+
       list.innerHTML = "";
-      rows.forEach(function(row){
-        var item = document.createElement("div");
-        item.className = "approval-row";
-        var span = document.createElement("span");
-        span.className = "email";
-        span.textContent = row.email || row.id;
-        var btn = document.createElement("button");
-        btn.className = "btn btn-primary";
-        btn.type = "button";
-        btn.textContent = "승인";
-        btn.addEventListener("click", async function(){
-          btn.disabled = true;
-          btn.textContent = "승인 중...";
-          var upd = await sb.from("profiles").update({ approved: true }).eq("id", row.id);
-          if (upd.error){ alert("승인 실패: " + upd.error.message); btn.disabled = false; btn.textContent = "승인"; return; }
-          item.remove();
-          refreshPendingCount();
-          if (!list.children.length) list.innerHTML = "<div class=\"footnote\">승인 대기 중인 신청이 없어요.</div>";
-        });
-        item.appendChild(span);
-        item.appendChild(btn);
-        list.appendChild(item);
-      });
+
+      var pendingTitle = document.createElement("div");
+      pendingTitle.className = "approval-section-title";
+      pendingTitle.textContent = "승인 대기 (" + pending.length + ")";
+      list.appendChild(pendingTitle);
+      if (!pending.length){
+        var emptyPending = document.createElement("div");
+        emptyPending.className = "footnote";
+        emptyPending.textContent = "대기 중인 신청이 없어요.";
+        list.appendChild(emptyPending);
+      } else {
+        pending.forEach(function(row){ list.appendChild(makeApprovalRow(row, { showApproveBtn: true })); });
+      }
+
+      var approvedTitle = document.createElement("div");
+      approvedTitle.className = "approval-section-title";
+      approvedTitle.textContent = "가입된 회원 (" + approvedRows.length + ")";
+      list.appendChild(approvedTitle);
+      if (!approvedRows.length){
+        var emptyApproved = document.createElement("div");
+        emptyApproved.className = "footnote";
+        emptyApproved.textContent = "아직 승인된 회원이 없어요.";
+        list.appendChild(emptyApproved);
+      } else {
+        approvedRows.forEach(function(row){ list.appendChild(makeApprovalRow(row, { showApproveBtn: false })); });
+      }
     } catch(e){ list.innerHTML = "<div class=\"footnote\">목록을 불러오지 못했어요.</div>"; }
   }
   function showAdminApprovalUI(){
