@@ -885,20 +885,38 @@
   }
   function daysBetween(a,b){ return (new Date(b).getTime() - new Date(a).getTime()) / 86400000; }
 
-  function currentG(inst, atDate){
+  // G no longer climbs on its own just because time passed — it only moves
+  // once the user explicitly approves the step (see gApproveBtn below).
+  // seg.gApprovedSteps is the highest step the user has agreed to; on first
+  // encounter (older instances predating this feature) it's grandfathered
+  // to whatever elapsed time already implied, so existing G values don't
+  // jump backwards.
+  function gState(inst, atDate){
     var seg = currentSegment(inst, atDate);
     var def = TYPE_DEFAULTS[seg.type];
     var days = Math.max(0, daysBetween(seg.startDate, atDate));
-    var steps = Math.floor(days / def.gStepDays);
-    return seg.startG + steps;
+    var elapsedSteps = Math.floor(days / def.gStepDays);
+    if (seg.gApprovedSteps === undefined || seg.gApprovedSteps === null){
+      seg.gApprovedSteps = elapsedSteps;
+    }
+    var approvedSteps = Math.min(seg.gApprovedSteps, elapsedSteps);
+    var G = seg.startG + approvedSteps;
+    var pending = elapsedSteps > approvedSteps
+      ? { seg: seg, fromG: G, toG: seg.startG + approvedSteps + 1 }
+      : null;
+    return { seg: seg, def: def, elapsedSteps: elapsedSteps, approvedSteps: approvedSteps, G: G, pending: pending };
   }
 
-  // Verification aid: when will G next tick up, and to what value.
+  function currentG(inst, atDate){
+    return gState(inst, atDate).G;
+  }
+
+  // Informational only: when would the next step become eligible, assuming
+  // the current one (if any) gets approved right away.
   function nextGIncrease(inst, atDate){
-    var seg = currentSegment(inst, atDate);
-    var def = TYPE_DEFAULTS[seg.type];
-    var days = Math.max(0, daysBetween(seg.startDate, atDate));
-    var steps = Math.floor(days / def.gStepDays);
+    var gs = gState(inst, atDate);
+    var seg = gs.seg, def = gs.def;
+    var steps = gs.approvedSteps;
     var nextStepDays = (steps + 1) * def.gStepDays;
     var d = new Date(new Date(seg.startDate).getTime() + nextStepDays*86400000);
     return { date: d, nextG: seg.startG + steps + 1 };
@@ -1397,9 +1415,10 @@
     }
     var seg = currentSegment(inst, todayStr());
     var last = lastState(inst);
-    var G = currentG(inst, todayStr());
+    var gs = gState(inst, todayStr());
+    var G = gs.G;
     var limit = currentPoolLimit(inst, todayStr());
-    var nextG = nextGIncrease(inst, todayStr());
+    var nextG = gs.pending ? null : nextGIncrease(inst, todayStr());
     var band = inst.band;
     var buyBand = round2(last.Vnext * band.low);
     var sellBand = round2(last.Vnext * band.high);
@@ -1414,7 +1433,8 @@
       '<div class="detail-head">' +
         '<div><h2>' + escapeHtml(inst.name) + ' ' + typeChip(seg.type) + '</h2>' +
         '<div class="sub">' + escapeHtml(inst.ticker) + ' · 사이클 ' + inst.cycleDays + '일 · 밴드 ±' + ((band.high-1)*100).toFixed(0) + '% · 시작 ' + fmtDate(inst.initDate) +
-          ' · Pool 매수한도 ' + limit.buyPct.toFixed(0) + '% · 다음 G 증가 ' + fmtDate(nextG.date) + '(G→' + nextG.nextG + ')' +
+          ' · Pool 매수한도 ' + limit.buyPct.toFixed(0) + '% · ' +
+          (nextG ? ('다음 G 증가 ' + fmtDate(nextG.date) + '(G→' + nextG.nextG + ')') : 'G 증가 승인 대기 중') +
         '</div></div>' +
         '<div class="head-actions">' +
           '<button class="btn btn-sm" id="poolLimitBtn" type="button">Pool 한도 설정</button>' +
@@ -1423,6 +1443,29 @@
         '</div>' +
       '</div>';
     mainArea.appendChild(head);
+
+    if (gs.pending){
+      var gBanner = document.createElement("div");
+      gBanner.className = "card";
+      gBanner.style.borderColor = "var(--accent)";
+      gBanner.innerHTML =
+        '<h3>G값 증가 승인 대기</h3>' +
+        '<div class="card-desc">G값을 <b class="num">' + gs.pending.fromG + '</b> → <b class="num">' + gs.pending.toG + '</b>(으)로 올릴 시점이 됐어요. ' +
+          '올리면 매수·매도 밴드 계산에 바로 반영돼요. 지금 올릴까요?</div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px;">' +
+          '<button class="btn btn-primary btn-sm" id="gApproveBtn" type="button">지금 올리기</button>' +
+          '<button class="btn btn-ghost btn-sm" id="gDeferBtn" type="button">나중에</button>' +
+        '</div>';
+      mainArea.appendChild(gBanner);
+      document.getElementById("gApproveBtn").addEventListener("click", function(){
+        gs.pending.seg.gApprovedSteps = gs.approvedSteps + 1;
+        saveState();
+        render();
+      });
+      document.getElementById("gDeferBtn").addEventListener("click", function(){
+        gBanner.remove();
+      });
+    }
 
     var costBasis = computeEffectiveCostBasis(inst);
     var refE = last.E != null ? last.E : (last.qty * (inst.initPrice||0));
