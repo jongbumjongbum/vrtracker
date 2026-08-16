@@ -941,6 +941,60 @@
     return Object.keys(map).sort().map(function(t){ return map[t]; });
   }
 
+  // Walks every sell fill across VR cycles, 무매 days, and manual trades the
+  // same way computeEffectiveCostBasis / computeMuDay do, but buckets each
+  // sell's realized gain by the calendar year of the date it happened on.
+  function realizedPLByYear(){
+    var byYear = {};
+    function add(year, kind, amount){
+      if (!byYear[year]) byYear[year] = { vr: 0, other: 0 };
+      byYear[year][kind] += amount;
+    }
+    state.instances.forEach(function(inst){
+      var qty = inst.initQty || 0, cost = qty * (inst.initPrice || 0);
+      inst.cycles.forEach(function(c){
+        var fills = (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c);
+        var year = new Date(c.date).getFullYear();
+        fills.forEach(function(f){
+          if (f.type === "buy"){
+            cost += f.qty * f.price; qty += f.qty;
+          } else if (qty > 0){
+            var avg = cost / qty;
+            var sq = Math.min(f.qty, qty);
+            add(year, "vr", sq * (f.price - avg));
+            qty -= sq;
+            cost = avg * Math.max(0, qty);
+          }
+        });
+      });
+    });
+    state.muInstances.forEach(function(inst){
+      var qty = 0, cost = 0;
+      inst.days.forEach(function(d){
+        var year = new Date(d.date).getFullYear();
+        (d.fills||[]).forEach(function(f){
+          if (f.type === "buy"){
+            cost += f.qty * f.price; qty += f.qty;
+          } else if (qty > 0){
+            var avg = cost / qty;
+            var sq = Math.min(f.qty, qty);
+            add(year, "other", sq * (f.price - avg));
+            qty -= sq;
+            cost = avg * Math.max(0, qty);
+          }
+        });
+      });
+    });
+    state.portfolio.holdings.forEach(function(h){
+      (h.trades||[]).forEach(function(t){
+        if (t.type === "sell"){
+          add(new Date(t.date).getFullYear(), "other", t.gain || 0);
+        }
+      });
+    });
+    return byYear;
+  }
+
   async function fetchFxRate(force){
     if (!force && state.fx && state.fx.updatedAt && (Date.now() - new Date(state.fx.updatedAt).getTime()) < 30*60*1000) return;
     try {
@@ -1709,6 +1763,28 @@
       stat("└ VR 실현손익", fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
       stat("└ 그외 실현손익", fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
     mainArea.appendChild(stats);
+
+    var yearCard = document.createElement("div");
+    yearCard.className = "card";
+    var byYear = realizedPLByYear();
+    var years = Object.keys(byYear).sort();
+    var yearRows = years.map(function(y){
+      var row = byYear[y];
+      var total = row.vr + row.other;
+      var color = function(p){ return p>0?"var(--buy)":(p<0?"var(--sell)":"var(--ink-soft)"); };
+      return '<tr>' +
+        '<td data-label="연도">' + y + '년</td>' +
+        '<td class="num" data-label="VR" style="color:' + color(row.vr) + '">' + fmtCurrency(row.vr) + '</td>' +
+        '<td class="num" data-label="그외" style="color:' + color(row.other) + '">' + fmtCurrency(row.other) + '</td>' +
+        '<td class="num" data-label="합계" style="color:' + color(total) + '">' + fmtCurrency(total) + '</td>' +
+        '</tr>';
+    }).join("");
+    yearCard.innerHTML = "<h3>실현손익 연도별</h3>" +
+      '<div class="card-desc">매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요.</div>' +
+      (yearRows
+        ? ('<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>연도</th><th class="num">VR</th><th class="num">그외</th><th class="num">합계</th></tr></thead><tbody>' + yearRows + '</tbody></table></div>')
+        : '<div class="chart-empty">아직 매도(실현손익) 기록이 없어요.</div>');
+    mainArea.appendChild(yearCard);
 
     var extraCashInput = document.getElementById("extraCashInput");
     extraCashInput.addEventListener("change", function(){
