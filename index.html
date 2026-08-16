@@ -21,6 +21,10 @@
     --s-vr: #2a78d6;
     --s-spy: #eb6834;
     --s-qqq: #1baf7a;
+    --cat-4: #eda100;
+    --cat-5: #e87ba4;
+    --cat-6: #008300;
+    --cat-7: #4a3aa7;
     --shadow: 0 1px 2px rgba(27,36,48,.06), 0 6px 20px rgba(27,36,48,.06);
     color-scheme: light;
   }
@@ -45,6 +49,10 @@
       --s-vr: #3987e5;
       --s-spy: #d95926;
       --s-qqq: #199e70;
+      --cat-4: #c98500;
+      --cat-5: #d55181;
+      --cat-6: #008300;
+      --cat-7: #9085e9;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
       color-scheme: dark;
     }
@@ -56,6 +64,7 @@
     --buy: #4FBE93; --buy-soft: #163628; --sell: #E2684B; --sell-soft: #3A2019;
     --hold: #8D95A3; --hold-soft: #232A34;
     --s-vr: #3987e5; --s-spy: #d95926; --s-qqq: #199e70;
+    --cat-4: #c98500; --cat-5: #d55181; --cat-6: #008300; --cat-7: #9085e9;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
     color-scheme: dark;
   }
@@ -66,6 +75,7 @@
     --buy: #0ca30c; --buy-soft: #E4F5E1; --sell: #d03b3b; --sell-soft: #FBE6E4;
     --hold: #8A8F98; --hold-soft: #ECEDE9;
     --s-vr: #2a78d6; --s-spy: #eb6834; --s-qqq: #1baf7a;
+    --cat-4: #eda100; --cat-5: #e87ba4; --cat-6: #008300; --cat-7: #4a3aa7;
     color-scheme: light;
   }
 
@@ -780,7 +790,7 @@
   async function fetchFxRate(force){
     if (!force && state.fx && state.fx.updatedAt && (Date.now() - new Date(state.fx.updatedAt).getTime()) < 30*60*1000) return;
     try {
-      var res = await fetch("https://api.frankfurter.app/latest?from=USD&to=KRW");
+      var res = await fetch("https://open.er-api.com/v6/latest/USD");
       var json = await res.json();
       if (json && json.rates && json.rates.KRW){
         state.fx = { usdkrw: json.rates.KRW, updatedAt: new Date().toISOString() };
@@ -1167,7 +1177,7 @@
     fxNote.style.marginTop = "-10px";
     fxNote.style.marginBottom = "16px";
     fxNote.textContent = (state.fx && state.fx.usdkrw)
-      ? ("환율 1 USD = " + state.fx.usdkrw.toFixed(2) + "원 · " + new Date(state.fx.updatedAt).toLocaleString("ko-KR") + " 기준 (frankfurter.app)")
+      ? ("환율 1 USD = " + state.fx.usdkrw.toFixed(2) + "원 · " + new Date(state.fx.updatedAt).toLocaleString("ko-KR") + " 기준 (open.er-api.com)")
       : "환율 정보를 아직 못 가져왔어요. 지금은 USD로만 정확히 표시돼요 — 환율 새로고침을 눌러보세요.";
     mainArea.appendChild(fxNote);
 
@@ -1197,11 +1207,35 @@
       renderMain();
     });
 
+    var tickerValues = {};
+    vrHoldings.forEach(function(h){
+      var live = getLivePrice(h.ticker);
+      var price = live != null ? live : (h.qty ? h.value/h.qty : 0);
+      tickerValues[h.ticker] = (tickerValues[h.ticker]||0) + h.qty*price;
+    });
+    manual.forEach(function(h){
+      if (!h.ticker || !h.qty) return;
+      var live = getLivePrice(h.ticker);
+      var price = live != null ? live : (h.currentPrice||0);
+      tickerValues[h.ticker] = (tickerValues[h.ticker]||0) + h.qty*price;
+    });
+    var allocSlices = Object.keys(tickerValues)
+      .map(function(t){ return { label: t, value: tickerValues[t] }; })
+      .filter(function(s){ return s.value > 0; })
+      .sort(function(a,b){ return b.value - a.value; });
+    var MAX_TICKER_SLICES = 7;
+    if (allocSlices.length > MAX_TICKER_SLICES){
+      var head = allocSlices.slice(0, MAX_TICKER_SLICES);
+      var restSum = allocSlices.slice(MAX_TICKER_SLICES).reduce(function(s,x){ return s+x.value; }, 0);
+      allocSlices = head.concat([{ label: "기타", value: restSum }]);
+    }
+    if (cashTotal > 0) allocSlices.push({ label: "예수금", value: cashTotal, isCash: true });
+
     var allocCard = document.createElement("div");
     allocCard.className = "card";
     allocCard.innerHTML = "<h3>자산배분</h3>" +
-      '<div class="card-desc">VR 평가금을 포함한 모든 주식 vs 예수금(VR Pool + 직접입력한 예수금 합) 비율이에요.</div>' +
-      renderAllocationDonut(stockTotal, cashTotal);
+      '<div class="card-desc">VR 평가금을 포함해 티커별로, 예수금(VR Pool + 직접입력)은 따로 나눴어요.</div>' +
+      renderAllocationDonut(allocSlices);
     mainArea.appendChild(allocCard);
 
     var vrCard = document.createElement("div");
@@ -1239,33 +1273,53 @@
     });
   }
 
-  function renderAllocationDonut(stockValue, cashValue){
-    var total = stockValue + cashValue;
+  var ALLOC_CATEGORICAL = ["var(--s-vr)", "var(--s-spy)", "var(--s-qqq)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)"];
+
+  // slices: [{label, value, isCash?}] — color is assigned by fixed order
+  // (categorical hues for tickers, a dedicated color for cash, muted for
+  // "기타"), never by rank, so a slice's color doesn't jump around as
+  // amounts change between renders.
+  function renderAllocationDonut(slices){
+    var total = slices.reduce(function(s,x){ return s + x.value; }, 0);
     if (total <= 0){
       return '<div class="chart-empty">아직 자산이 없어요. VR을 만들면 여기 채워져요.</div>';
     }
-    var stockPct = stockValue / total * 100;
-    var cashPct = 100 - stockPct;
     var r = 70, cx = 90, cy = 90, sw = 26;
     var circumference = 2 * Math.PI * r;
-    var stockLen = circumference * (stockPct/100);
+    var catIdx = 0;
+    var colored = slices.map(function(s){
+      var color;
+      if (s.isCash) color = "var(--accent)";
+      else if (s.label === "기타") color = "var(--muted)";
+      else { color = ALLOC_CATEGORICAL[catIdx % ALLOC_CATEGORICAL.length]; catIdx++; }
+      return { label: s.label, value: s.value, pct: s.value/total*100, color: color };
+    });
+
+    var cumLen = 0;
+    var arcs = colored.map(function(s){
+      var len = circumference * (s.value/total);
+      var arc = '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + s.color + '" stroke-width="' + sw + '" ' +
+        'stroke-dasharray="' + len.toFixed(2) + ' ' + circumference.toFixed(2) + '" ' +
+        'stroke-dashoffset="' + (-cumLen).toFixed(2) + '" ' +
+        'transform="rotate(-90 ' + cx + ' ' + cy + ')" />';
+      cumLen += len;
+      return arc;
+    }).join("");
+
+    var topLabel = colored.length ? (colored[0].label + " " + colored[0].pct.toFixed(0) + "%") : "";
     var svg =
-      '<svg viewBox="0 0 180 180" width="180" height="180" style="flex:0 0 auto;">' +
-        '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--accent)" stroke-width="' + sw + '" />' +
-        '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--s-vr)" stroke-width="' + sw + '" ' +
-          'stroke-dasharray="' + stockLen.toFixed(1) + ' ' + circumference.toFixed(1) + '" stroke-linecap="butt" ' +
-          'transform="rotate(-90 ' + cx + ' ' + cy + ')" />' +
+      '<svg viewBox="0 0 180 180" width="180" height="180" style="flex:0 0 auto;">' + arcs +
         '<text x="' + cx + '" y="' + (cy-16) + '" text-anchor="middle" font-size="12" fill="var(--muted)">총자산</text>' +
         '<text x="' + cx + '" y="' + (cy+2) + '" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">' + fmtCurrency(total) + '</text>' +
-        '<text x="' + cx + '" y="' + (cy+20) + '" text-anchor="middle" font-size="12" fill="var(--muted)">주식 ' + stockPct.toFixed(0) + '%</text>' +
+        '<text x="' + cx + '" y="' + (cy+20) + '" text-anchor="middle" font-size="12" fill="var(--muted)">' + escapeHtml(topLabel) + '</text>' +
       '</svg>';
-    var legend =
-      '<div style="display:flex;flex-direction:column;gap:10px;justify-content:center;">' +
-        '<div class="legend" style="margin:0;"><span class="item"><span class="swatch" style="background:var(--s-vr);width:10px;height:10px;border-radius:99px;"></span>' +
-          '주식 &nbsp;<b class="num">' + fmtCurrency(stockValue) + '</b> &nbsp;(' + stockPct.toFixed(1) + '%)</span></div>' +
-        '<div class="legend" style="margin:0;"><span class="item"><span class="swatch" style="background:var(--accent);width:10px;height:10px;border-radius:99px;"></span>' +
-          '예수금 &nbsp;<b class="num">' + fmtCurrency(cashValue) + '</b> &nbsp;(' + cashPct.toFixed(1) + '%)</span></div>' +
-      '</div>';
+
+    var legend = '<div style="display:flex;flex-direction:column;gap:8px;justify-content:center;">' +
+      colored.map(function(s){
+        return '<div class="legend" style="margin:0;"><span class="item"><span class="swatch" style="background:' + s.color + ';width:10px;height:10px;border-radius:99px;"></span>' +
+          escapeHtml(s.label) + ' &nbsp;<b class="num">' + fmtCurrency(s.value) + '</b> &nbsp;(' + s.pct.toFixed(1) + '%)</span></div>';
+      }).join("") +
+    '</div>';
     return '<div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">' + svg + legend + '</div>';
   }
 
