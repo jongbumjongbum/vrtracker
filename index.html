@@ -382,6 +382,7 @@
       <button type="button" data-mode="vr" class="active">VR</button>
       <button type="button" data-mode="mu">무매</button>
       <button type="button" data-mode="portfolio">포트폴리오</button>
+      <button type="button" data-mode="pnl">손익</button>
     </div>
 
     <button class="btn btn-primary btn-block" id="newInstanceBtn" type="button">+ 새 VR 만들기</button>
@@ -897,6 +898,7 @@
     if (!state.portfolio.holdings) state.portfolio.holdings = [];
     if (state.portfolio.extraCash == null) state.portfolio.extraCash = 0;
     if (!state.portfolio.cashLog) state.portfolio.cashLog = [];
+    if (!state.portfolio.assetSnapshots) state.portfolio.assetSnapshots = [];
     state.portfolio.holdings.forEach(function(h){
       if (h.realizedPL == null) h.realizedPL = 0;
       if (!h.trades) h.trades = [];
@@ -944,24 +946,34 @@
   // Walks every sell fill across VR cycles, 무매 days, and manual trades the
   // same way computeEffectiveCostBasis / computeMuDay do, but buckets each
   // sell's realized gain by the calendar year of the date it happened on.
-  function realizedPLByYear(){
-    var byYear = {};
-    function add(year, kind, amount){
-      if (!byYear[year]) byYear[year] = { vr: 0, other: 0 };
-      byYear[year][kind] += amount;
+  // Walks every sell fill across VR cycles, 무매 days, and manual trades the
+  // same way computeEffectiveCostBasis / computeMuDay do, bucketing each
+  // sell's realized gain by both the year and the "YYYY-MM" month it happened
+  // in, so 손익 tab tables/charts don't need to re-walk the same data twice.
+  function realizedPLBuckets(){
+    var byYear = {}, byMonth = {};
+    function add(map, key, kind, amount){
+      if (!map[key]) map[key] = { vr: 0, other: 0 };
+      map[key][kind] += amount;
+    }
+    function addBoth(dateStr, kind, amount){
+      var d = new Date(dateStr);
+      var year = d.getFullYear();
+      var month = year + "-" + pad(d.getMonth()+1);
+      add(byYear, year, kind, amount);
+      add(byMonth, month, kind, amount);
     }
     state.instances.forEach(function(inst){
       var qty = inst.initQty || 0, cost = qty * (inst.initPrice || 0);
       inst.cycles.forEach(function(c){
         var fills = (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c);
-        var year = new Date(c.date).getFullYear();
         fills.forEach(function(f){
           if (f.type === "buy"){
             cost += f.qty * f.price; qty += f.qty;
           } else if (qty > 0){
             var avg = cost / qty;
             var sq = Math.min(f.qty, qty);
-            add(year, "vr", sq * (f.price - avg));
+            addBoth(c.date, "vr", sq * (f.price - avg));
             qty -= sq;
             cost = avg * Math.max(0, qty);
           }
@@ -971,14 +983,13 @@
     state.muInstances.forEach(function(inst){
       var qty = 0, cost = 0;
       inst.days.forEach(function(d){
-        var year = new Date(d.date).getFullYear();
         (d.fills||[]).forEach(function(f){
           if (f.type === "buy"){
             cost += f.qty * f.price; qty += f.qty;
           } else if (qty > 0){
             var avg = cost / qty;
             var sq = Math.min(f.qty, qty);
-            add(year, "other", sq * (f.price - avg));
+            addBoth(d.date, "other", sq * (f.price - avg));
             qty -= sq;
             cost = avg * Math.max(0, qty);
           }
@@ -987,12 +998,44 @@
     });
     state.portfolio.holdings.forEach(function(h){
       (h.trades||[]).forEach(function(t){
-        if (t.type === "sell"){
-          add(new Date(t.date).getFullYear(), "other", t.gain || 0);
-        }
+        if (t.type === "sell") addBoth(t.date, "other", t.gain || 0);
       });
     });
-    return byYear;
+    return { byYear: byYear, byMonth: byMonth };
+  }
+
+  // Records at most one snapshot per calendar day (never overwrites an
+  // existing one), so opening the Portfolio tab repeatedly in the same day
+  // doesn't spam saveState()/Supabase — the tradeoff is today's number is
+  // whatever it was on the FIRST check that day, which is fine for a
+  // month/year trend view.
+  function upsertTodaySnapshotIfMissing(totalAsset, unrealizedPL, realizedPL){
+    var today = todayStr();
+    var snaps = state.portfolio.assetSnapshots;
+    if (snaps.some(function(s){ return s.date === today; })) return;
+    snaps.push({
+      date: today, totalAsset: round2(totalAsset), unrealizedPL: round2(unrealizedPL),
+      realizedPL: round2(realizedPL), cumulativePL: round2(unrealizedPL + realizedPL)
+    });
+    snaps.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+    saveState();
+  }
+  function monthlySnapshots(){
+    var sorted = state.portfolio.assetSnapshots.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    var map = {};
+    sorted.forEach(function(s){
+      var d = new Date(s.date);
+      map[d.getFullYear() + "-" + pad(d.getMonth()+1)] = s;
+    });
+    return Object.keys(map).sort().map(function(k){ return { key: k, snap: map[k] }; });
+  }
+  function yearlySnapshots(){
+    var sorted = state.portfolio.assetSnapshots.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    var map = {};
+    sorted.forEach(function(s){
+      map[new Date(s.date).getFullYear()] = s;
+    });
+    return Object.keys(map).sort().map(function(k){ return { key: k, snap: map[k] }; });
   }
 
   async function fetchFxRate(force){
@@ -1091,9 +1134,10 @@
     });
     var newBtn = document.getElementById("newInstanceBtn");
     newBtn.textContent = state.viewMode === "mu" ? "+ 새 무매 만들기" : "+ 새 VR 만들기";
-    newBtn.style.display = state.viewMode === "portfolio" ? "none" : "";
+    newBtn.style.display = (state.viewMode === "portfolio" || state.viewMode === "pnl") ? "none" : "";
 
     instanceList.innerHTML = "";
+    if (state.viewMode === "pnl") return;
     if (state.viewMode === "mu"){
       renderMuSidebarList();
       return;
@@ -1158,6 +1202,7 @@
     mainArea.innerHTML = "";
     if (state.viewMode === "portfolio"){ renderPortfolio(); return; }
     if (state.viewMode === "mu"){ renderMuDetail(); return; }
+    if (state.viewMode === "pnl"){ renderPnL(); return; }
     var inst = state.instances.find(function(i){ return i.id === state.selectedId; });
     if (!inst){
       mainArea.innerHTML =
@@ -1746,6 +1791,7 @@
     var totalInvestedReal = (vrProfit!=null ? vrInvestedReal : 0) + otherCostTotal;
     var totalProfitAll = (vrProfit!=null ? vrProfit : 0) + otherProfit;
     var totalProfitAllPct = totalInvestedReal > 0 ? (totalProfitAll/totalInvestedReal*100) : null;
+    upsertTodaySnapshotIfMissing(grandTotal, totalProfitAll, totalRealized);
 
     stats.innerHTML =
       stat("총 자산 (주식+예수금)", fmtCurrency(grandTotal)) +
@@ -1763,28 +1809,6 @@
       stat("└ VR 실현손익", fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
       stat("└ 그외 실현손익", fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
     mainArea.appendChild(stats);
-
-    var yearCard = document.createElement("div");
-    yearCard.className = "card";
-    var byYear = realizedPLByYear();
-    var years = Object.keys(byYear).sort();
-    var yearRows = years.map(function(y){
-      var row = byYear[y];
-      var total = row.vr + row.other;
-      var color = function(p){ return p>0?"var(--buy)":(p<0?"var(--sell)":"var(--ink-soft)"); };
-      return '<tr>' +
-        '<td data-label="연도">' + y + '년</td>' +
-        '<td class="num" data-label="VR" style="color:' + color(row.vr) + '">' + fmtCurrency(row.vr) + '</td>' +
-        '<td class="num" data-label="그외" style="color:' + color(row.other) + '">' + fmtCurrency(row.other) + '</td>' +
-        '<td class="num" data-label="합계" style="color:' + color(total) + '">' + fmtCurrency(total) + '</td>' +
-        '</tr>';
-    }).join("");
-    yearCard.innerHTML = "<h3>실현손익 연도별</h3>" +
-      '<div class="card-desc">매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요.</div>' +
-      (yearRows
-        ? ('<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>연도</th><th class="num">VR</th><th class="num">그외</th><th class="num">합계</th></tr></thead><tbody>' + yearRows + '</tbody></table></div>')
-        : '<div class="chart-empty">아직 매도(실현손익) 기록이 없어요.</div>');
-    mainArea.appendChild(yearCard);
 
     var extraCashInput = document.getElementById("extraCashInput");
     extraCashInput.addEventListener("change", function(){
@@ -1970,6 +1994,118 @@
       saveState();
       renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
     });
+  }
+
+  function pnlRowColor(p){ return p>0?"var(--buy)":(p<0?"var(--sell)":"var(--ink-soft)"); }
+
+  function renderPnL(){
+    var head = document.createElement("div");
+    head.innerHTML =
+      '<div class="detail-head">' +
+        '<div><h2>손익</h2><div class="sub">실현손익은 연도별·월별로, 총자산·누적손익(실현+미실현)은 포트폴리오 탭을 열 때마다 자동으로 남는 스냅샷 기준으로 보여줘요.</div></div>' +
+      '</div>';
+    mainArea.appendChild(head);
+
+    var buckets = realizedPLBuckets();
+
+    function realizedTable(map, keys, labelSuffix){
+      var rows = keys.map(function(k){
+        var row = map[k];
+        var total = row.vr + row.other;
+        return '<tr>' +
+          '<td data-label="기간">' + k + labelSuffix + '</td>' +
+          '<td class="num" data-label="VR" style="color:' + pnlRowColor(row.vr) + '">' + fmtCurrency(row.vr) + '</td>' +
+          '<td class="num" data-label="그외" style="color:' + pnlRowColor(row.other) + '">' + fmtCurrency(row.other) + '</td>' +
+          '<td class="num" data-label="합계" style="color:' + pnlRowColor(total) + '">' + fmtCurrency(total) + '</td>' +
+          '</tr>';
+      }).join("");
+      return rows
+        ? ('<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>기간</th><th class="num">VR</th><th class="num">그외</th><th class="num">합계</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
+        : '<div class="chart-empty">아직 매도(실현손익) 기록이 없어요.</div>';
+    }
+
+    var yearCard = document.createElement("div");
+    yearCard.className = "card";
+    yearCard.innerHTML = "<h3>실현손익 연도별</h3>" +
+      '<div class="card-desc">매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요.</div>' +
+      realizedTable(buckets.byYear, Object.keys(buckets.byYear).sort(), "년");
+    mainArea.appendChild(yearCard);
+
+    var monthCard = document.createElement("div");
+    monthCard.className = "card";
+    monthCard.innerHTML = "<h3>실현손익 월별</h3>" +
+      '<div class="card-desc">해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요.</div>' +
+      realizedTable(buckets.byMonth, Object.keys(buckets.byMonth).sort(), "");
+    mainArea.appendChild(monthCard);
+
+    var monthly = monthlySnapshots();
+    var assetCard = document.createElement("div");
+    assetCard.className = "card";
+    assetCard.innerHTML = "<h3>총자산 증감 (월별)</h3>" +
+      '<div class="card-desc">포트폴리오 탭을 연 날마다 그날 첫 확인 시점의 총자산을 자동으로 기록해요. 해가 바뀌어도 하나의 그래프로 계속 이어져요.</div>' +
+      '<div id="assetChartHost"></div>';
+    mainArea.appendChild(assetCard);
+    renderSimpleLineChart(
+      document.getElementById("assetChartHost"),
+      monthly.map(function(m){ return { label: m.key, value: m.snap.totalAsset }; }),
+      "--s-vr", fmtCurrency
+    );
+    if (monthly.length){
+      var assetRows = monthly.map(function(m, i){
+        var prev = i>0 ? monthly[i-1].snap.totalAsset : null;
+        var delta = prev!=null ? m.snap.totalAsset - prev : null;
+        return '<tr>' +
+          '<td data-label="월">' + m.key + '</td>' +
+          '<td class="num" data-label="총자산">' + fmtCurrency(m.snap.totalAsset) + '</td>' +
+          '<td class="num" data-label="전월대비" style="color:' + (delta==null?"var(--ink-soft)":pnlRowColor(delta)) + '">' + (delta==null?"–":((delta>0?"+":"")+fmtCurrency(delta))) + '</td>' +
+          '</tr>';
+      }).join("");
+      assetCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>';
+    }
+
+    var pnlMonthCard = document.createElement("div");
+    pnlMonthCard.className = "card";
+    pnlMonthCard.innerHTML = "<h3>누적손익 (실현+미실현) — 월별</h3>" +
+      '<div class="card-desc">그 시점까지 확정된 실현손익과, 그 시점 보유종목의 미실현손익을 합친 값이에요. 해가 바뀌어도 하나의 그래프로 이어져요.</div>' +
+      '<div id="pnlMonthChartHost"></div>';
+    mainArea.appendChild(pnlMonthCard);
+    renderSimpleLineChart(
+      document.getElementById("pnlMonthChartHost"),
+      monthly.map(function(m){ return { label: m.key, value: m.snap.cumulativePL }; }),
+      "--cat-4", fmtCurrency
+    );
+    if (monthly.length){
+      var pnlMonthRows = monthly.map(function(m){
+        return '<tr><td data-label="월">' + m.key + '</td><td class="num" data-label="누적손익" style="color:' + pnlRowColor(m.snap.cumulativePL) + '">' + fmtCurrency(m.snap.cumulativePL) + '</td></tr>';
+      }).join("");
+      pnlMonthCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlMonthRows + '</tbody></table></div>';
+    }
+
+    var yearly = yearlySnapshots();
+    var pnlYearCard = document.createElement("div");
+    pnlYearCard.className = "card";
+    pnlYearCard.innerHTML = "<h3>누적손익 (실현+미실현) — 연도별</h3>" +
+      '<div class="card-desc">각 연도 마지막으로 확인한 시점 기준 누적손익이에요.</div>' +
+      '<div id="pnlYearChartHost"></div>';
+    mainArea.appendChild(pnlYearCard);
+    renderSimpleLineChart(
+      document.getElementById("pnlYearChartHost"),
+      yearly.map(function(y){ return { label: y.key + "년", value: y.snap.cumulativePL }; }),
+      "--cat-4", fmtCurrency
+    );
+    if (yearly.length){
+      var pnlYearRows = yearly.map(function(y){
+        return '<tr><td data-label="연도">' + y.key + '년</td><td class="num" data-label="누적손익" style="color:' + pnlRowColor(y.snap.cumulativePL) + '">' + fmtCurrency(y.snap.cumulativePL) + '</td></tr>';
+      }).join("");
+      pnlYearCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>연도</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlYearRows + '</tbody></table></div>';
+    }
+
+    if (!state.portfolio.assetSnapshots.length){
+      var hint = document.createElement("div");
+      hint.className = "footnote";
+      hint.textContent = "아직 스냅샷이 없어요 — 포트폴리오 탭을 한 번 열면 오늘 기록이 자동으로 남아요.";
+      mainArea.appendChild(hint);
+    }
   }
 
   var ALLOC_CATEGORICAL = ["var(--s-vr)", "var(--s-spy)", "var(--s-qqq)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)"];
@@ -2667,6 +2803,74 @@
         });
       }
     });
+  }
+
+  // A single-series line chart for time-bucketed series (손익 tab's monthly/
+  // yearly trends). x is categorical (equally spaced by bucket, not by real
+  // elapsed time) since each point already represents one period's summary
+  // value — mirrors renderBandChart's gridline/hover/tooltip conventions.
+  function renderSimpleLineChart(host, points, colorVar, valueFmt){
+    host.innerHTML = "";
+    if (!points.length){
+      host.innerHTML = '<div class="chart-empty">아직 데이터가 없어요.</div>';
+      return;
+    }
+    var W = host.clientWidth || 900, H = 260, pad = {l:70,r:16,t:14,b:28};
+    var wrap = document.createElement("div"); wrap.className = "chart-wrap";
+    var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
+    wrap.appendChild(svg);
+    var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
+    host.appendChild(wrap);
+
+    var vals = points.map(function(p){ return p.value; });
+    var minV = Math.min.apply(null, vals.concat([0]));
+    var maxV = Math.max.apply(null, vals.concat([0]));
+    if (minV === maxV){ minV -= 1; maxV += 1; }
+    var padV = (maxV-minV)*0.12;
+    minV -= padV; maxV += padV;
+
+    function x(i){ return points.length===1 ? (pad.l+(W-pad.l-pad.r)/2) : pad.l + i/(points.length-1) * (W-pad.l-pad.r); }
+    function y(v){ return H-pad.b - (v-minV)/(maxV-minV) * (H-pad.t-pad.b); }
+
+    var gridN = 4;
+    for (var i=0;i<=gridN;i++){
+      var gv = minV + (maxV-minV)*i/gridN;
+      var gy = y(gv);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
+      var lbl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
+      lbl.textContent = valueFmt(gv);
+      svg.appendChild(lbl);
+    }
+    if (minV < 0 && maxV > 0){
+      var zy = y(0);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:zy, y2:zy, stroke:cssVar('--ink-soft'), "stroke-width":1.25}));
+    }
+
+    var path = points.map(function(p,i){ return (i===0?"M":"L") + x(i) + "," + y(p.value); }).join(" ");
+    svg.appendChild(svgEl("path", {d:path, fill:"none", stroke:cssVar(colorVar), "stroke-width":2.5, "stroke-linecap":"round", "stroke-linejoin":"round"}));
+
+    var maxLabels = 8;
+    var step = Math.max(1, Math.ceil(points.length/maxLabels));
+    points.forEach(function(p,i){
+      if (i % step !== 0 && i !== points.length-1) return;
+      var lbl = svgEl("text", {x:x(i), y:H-8, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
+      lbl.textContent = p.label;
+      svg.appendChild(lbl);
+    });
+
+    points.forEach(function(p,i){
+      var cx = x(i), cy = y(p.value);
+      var c = svgEl("circle", {cx:cx, cy:cy, r:4, fill:cssVar(colorVar), stroke:cssVar('--panel'), "stroke-width":1.5, style:"cursor:pointer;"});
+      bindPointerTip(c, function(ev){ showTip(ev, p); }, function(){ tooltip.style.opacity = 0; });
+      svg.appendChild(c);
+    });
+    function showTip(ev, p){
+      var r = wrap.getBoundingClientRect();
+      tooltip.style.left = (ev.clientX - r.left) + "px";
+      tooltip.style.top = (ev.clientY - r.top) + "px";
+      tooltip.style.opacity = 1;
+      tooltip.innerHTML = "<b>" + p.label + "</b><br/>" + valueFmt(p.value);
+    }
   }
 
   /* ---------------- modals ---------------- */
