@@ -913,7 +913,10 @@
     entryCard.innerHTML =
       '<h3>새 사이클 입력</h3>' +
       '<div class="card-desc">직전 사이클의 체결 결과(보유수량·현재가)와 이번 사이클 적립/인출금을 입력하면 다음 매수가·매도가·매수한도가 자동 계산돼요.</div>' +
-      '<div class="preview-band">' +
+      '<h3 style="margin-top:16px;font-size:14px;">지금 걸어둘 주문표</h3>' +
+      '<div class="card-desc">' + inst.ticker + ' 가격이 매수가까지 내려오면 이 수량을 사고, 매도가까지 오르면 이 수량을 팔면 E가 V로 돌아와요. 실제로는 이 가격에 지정가(limit) 주문을 걸어두시면 돼요.</div>' +
+      renderOrderTable(inst, last, buyBand, sellBand, limit) +
+      '<div class="preview-band" style="display:none;">' +
         '<span><b>지금 활성화된 밴드</b></span>' +
         '<span>매수가 ↓ <b>' + fmtMoney0(buyBand) + '</b></span>' +
         '<span>매도가 ↑ <b>' + fmtMoney0(sellBand) + '</b></span>' +
@@ -1254,6 +1257,46 @@
       out.textContent = rate.toFixed(1) + "%";
       out.style.color = rate>5 ? "var(--sell)" : (rate>4 ? "var(--accent)" : "var(--buy)");
     });
+  }
+
+  function renderOrderTable(inst, last, buyBand, sellBand, limit){
+    var qty = last.qty || 0;
+    var V = last.Vnext;
+    var buyLimitAmt = round2(last.Pool * (limit.buyPct/100));
+    var buyRow = null, sellRow = null;
+
+    if (qty > 0){
+      var buyPrice = buyBand / qty;
+      var sellPrice = sellBand / qty;
+      var buyQtyRaw = Math.max(0, (V - buyBand) / buyPrice);
+      var buyQtyCap = buyPrice > 0 ? buyLimitAmt / buyPrice : 0;
+      var buyQty = Math.min(buyQtyRaw, buyQtyCap);
+      var sellQtyRaw = Math.max(0, (sellBand - V) / sellPrice);
+      var sellQty = Math.min(sellQtyRaw, qty);
+      buyRow = { price: buyPrice, qty: buyQty, amount: buyQty*buyPrice, note: (buyQtyRaw > buyQtyCap + 1e-9) ? ('매수한도(' + limit.buyPct.toFixed(0) + '%)에 걸림') : '' };
+      sellRow = { price: sellPrice, qty: sellQty, amount: sellQty*sellPrice, note: '' };
+    } else {
+      var refPrice = inst.initPrice || (inst.cycles.length ? inst.cycles[inst.cycles.length-1].price : 0);
+      if (refPrice > 0){
+        buyRow = { price: refPrice, qty: buyLimitAmt/refPrice, amount: buyLimitAmt, note: '보유수량 0 — 이번엔 가격 상관없이 무조건 매수' };
+      }
+    }
+
+    function row(type, r){
+      if (!r) return '<tr><td colspan="5" class="chart-empty">해당 없음</td></tr>';
+      var cls = type === "매수" ? "signal-buy" : "signal-sell";
+      return '<tr>' +
+        '<td><span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + type + '</span></td>' +
+        '<td class="num" style="text-align:right;">' + fmtMoney(r.price) + '</td>' +
+        '<td class="num" style="text-align:right;">' + r.qty.toFixed(4) + '주</td>' +
+        '<td class="num" style="text-align:right;">' + fmtMoney0(r.amount) + '</td>' +
+        '<td class="footnote" style="white-space:normal;">' + r.note + '</td>' +
+        '</tr>';
+    }
+
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>구분</th><th class="num">가격</th><th class="num">수량</th><th class="num">금액</th><th>비고</th>' +
+      '</tr></thead><tbody>' + row("매수", buyRow) + row("매도", sellRow) + '</tbody></table></div>';
   }
 
   function renderHistoryTable(inst){
