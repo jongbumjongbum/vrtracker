@@ -93,7 +93,39 @@
   button, input, select { font: inherit; color: inherit; }
 
   .app { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
-  @media (max-width: 860px) { .app { grid-template-columns: 1fr; } }
+
+  .mobile-topbar { display: none; }
+  .sidebar-backdrop { display: none; }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+    .mobile-topbar {
+      display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 30;
+      background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 14px;
+    }
+    .mobile-topbar h1 { font-size: 17px; flex: 1; }
+    .hamburger-btn {
+      display: flex; flex-direction: column; justify-content: center; gap: 4px;
+      width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--panel-2); cursor: pointer; padding: 0; align-items: center;
+    }
+    .hamburger-btn span { display: block; width: 16px; height: 2px; background: var(--ink); border-radius: 2px; }
+    .sidebar {
+      position: fixed; top: 0; bottom: 0; left: 0; width: 82vw; max-width: 320px;
+      z-index: 45; transform: translateX(-100%); transition: transform .22s ease;
+      box-shadow: var(--shadow); overflow-y: auto;
+    }
+    .sidebar.open { transform: translateX(0); }
+    .sidebar-backdrop {
+      display: block; position: fixed; inset: 0; background: rgba(10,12,16,.4);
+      z-index: 40; opacity: 0; pointer-events: none; transition: opacity .2s ease;
+    }
+    .sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
+    .main { padding: 16px 14px 48px !important; }
+    .card { padding: 14px 15px !important; }
+    .detail-head h2 { font-size: 21px !important; }
+    .form-grid { grid-template-columns: 1fr !important; }
+  }
 
   .sidebar {
     background: var(--panel);
@@ -303,7 +335,12 @@
 </style>
 
 <div class="app hidden" id="appRoot">
-  <aside class="sidebar">
+  <div class="mobile-topbar">
+    <button class="hamburger-btn" id="hamburgerBtn" type="button" aria-label="메뉴 열기"><span></span><span></span><span></span></button>
+    <h1>VR 트래커</h1>
+  </div>
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+  <aside class="sidebar" id="sidebarEl">
     <div class="brand">
       <div>
         <h1>VR 트래커</h1>
@@ -1559,6 +1596,25 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  // Hover doesn't exist on touch devices, so chart tooltips need an explicit
+  // tap handler too — this wires both to the same show/hide callbacks,
+  // normalizing touch events to look like a mouse event (clientX/clientY).
+  function bindPointerTip(el, onShow, onHide){
+    el.addEventListener("mousemove", onShow);
+    el.addEventListener("mouseleave", onHide);
+    el.addEventListener("touchstart", function(ev){
+      ev.preventDefault();
+      var t = ev.touches[0];
+      onShow({ clientX: t.clientX, clientY: t.clientY });
+    }, { passive: false });
+    el.addEventListener("touchmove", function(ev){
+      ev.preventDefault();
+      var t = ev.touches[0];
+      onShow({ clientX: t.clientX, clientY: t.clientY });
+    }, { passive: false });
+    el.addEventListener("touchend", onHide);
+  }
+
   function renderBandChart(host, inst){
     host.innerHTML = "";
     var points = inst.cycles;
@@ -1647,8 +1703,7 @@
       var color = p.signal === "buy" ? cssVar('--buy') : (p.signal === "sell" ? cssVar('--sell') : cssVar('--s-vr'));
       var r = p.signal === "hold" ? 3 : 5;
       var c = svgEl("circle", {cx:cx, cy:cy, r:r, fill:color, stroke:cssVar('--panel'), "stroke-width":1.5, style:"cursor:pointer;"});
-      c.addEventListener("mousemove", function(ev){ showTip(ev, wrap, tooltip, p); });
-      c.addEventListener("mouseleave", function(){ tooltip.style.opacity = 0; });
+      bindPointerTip(c, function(ev){ showTip(ev, wrap, tooltip, p); }, function(){ tooltip.style.opacity = 0; });
       svg.appendChild(c);
     });
 
@@ -1749,7 +1804,7 @@
       var cx = x(new Date(p.date).getTime());
       var hitW = (W-pad.l-pad.r)/series.length;
       var hitRect = svgEl("rect", {x:cx-hitW/2, y:pad.t, width:hitW, height:H-pad.t-pad.b, fill:"transparent"});
-      hitRect.addEventListener("mousemove", function(ev){
+      bindPointerTip(hitRect, function(ev){
         var r = wrap.getBoundingClientRect();
         tooltip.style.left = (ev.clientX - r.left) + "px";
         tooltip.style.top = (ev.clientY - r.top) + "px";
@@ -1757,8 +1812,7 @@
         tooltip.innerHTML = "<b>" + fmtDate(p.date) + "</b><br/>VR " + fmtMoney0(p.vr) +
           (p.spy!=null ? "<br/>SPY " + fmtMoney0(p.spy) : "") +
           (p.qqq!=null ? "<br/>QQQ " + fmtMoney0(p.qqq) : "");
-      });
-      hitRect.addEventListener("mouseleave", function(){ tooltip.style.opacity = 0; });
+      }, function(){ tooltip.style.opacity = 0; });
       svg.appendChild(hitRect);
       if (idx === series.length-1){
         [["vr","--s-vr"],["spy","--s-spy"],["qqq","--s-qqq"]].forEach(function(pair){
@@ -1988,6 +2042,19 @@
     applyThemeLabel();
   });
   applyThemeLabel();
+
+  /* ---------------- mobile drawer ---------------- */
+  var sidebarEl = document.getElementById("sidebarEl");
+  var sidebarBackdrop = document.getElementById("sidebarBackdrop");
+  var hamburgerBtn = document.getElementById("hamburgerBtn");
+  function openDrawer(){ sidebarEl.classList.add("open"); sidebarBackdrop.classList.add("open"); }
+  function closeDrawer(){ sidebarEl.classList.remove("open"); sidebarBackdrop.classList.remove("open"); }
+  hamburgerBtn.addEventListener("click", openDrawer);
+  sidebarBackdrop.addEventListener("click", closeDrawer);
+  sidebarEl.addEventListener("click", function(ev){
+    // any tap that navigates away (pick a VR, switch mode, make a new VR) should close the drawer
+    if (ev.target.closest(".instance-card, #modeSwitch button, #newInstanceBtn")) closeDrawer();
+  });
 
   /* ---------------- init ---------------- */
   window.addEventListener("resize", function(){ if (currentUserId) render(); });
