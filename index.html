@@ -2006,6 +2006,31 @@
       '</div>';
     mainArea.appendChild(head);
 
+    var monthly = monthlySnapshots();
+    var assetCard = document.createElement("div");
+    assetCard.className = "card";
+    assetCard.innerHTML = "<h3>총자산 증감 (월별)</h3>" +
+      '<div class="card-desc">포트폴리오 탭을 연 날마다 그날 첫 확인 시점의 총자산을 자동으로 기록해요. 해가 바뀌어도 하나의 그래프로 계속 이어져요.</div>' +
+      '<div id="assetChartHost"></div>';
+    mainArea.appendChild(assetCard);
+    renderSimpleLineChart(
+      document.getElementById("assetChartHost"),
+      monthly.map(function(m){ return { label: m.key, value: m.snap.totalAsset }; }),
+      "--s-vr", fmtCurrency
+    );
+    if (monthly.length){
+      var assetRows = monthly.map(function(m, i){
+        var prev = i>0 ? monthly[i-1].snap.totalAsset : null;
+        var delta = prev!=null ? m.snap.totalAsset - prev : null;
+        return '<tr>' +
+          '<td data-label="월">' + m.key + '</td>' +
+          '<td class="num" data-label="총자산">' + fmtCurrency(m.snap.totalAsset) + '</td>' +
+          '<td class="num" data-label="전월대비" style="color:' + (delta==null?"var(--ink-soft)":pnlRowColor(delta)) + '">' + (delta==null?"–":((delta>0?"+":"")+fmtCurrency(delta))) + '</td>' +
+          '</tr>';
+      }).join("");
+      assetCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>';
+    }
+
     var buckets = realizedPLBuckets();
 
     function realizedTable(map, keys, labelSuffix){
@@ -2037,31 +2062,6 @@
       '<div class="card-desc">해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요.</div>' +
       realizedTable(buckets.byMonth, Object.keys(buckets.byMonth).sort(), "");
     mainArea.appendChild(monthCard);
-
-    var monthly = monthlySnapshots();
-    var assetCard = document.createElement("div");
-    assetCard.className = "card";
-    assetCard.innerHTML = "<h3>총자산 증감 (월별)</h3>" +
-      '<div class="card-desc">포트폴리오 탭을 연 날마다 그날 첫 확인 시점의 총자산을 자동으로 기록해요. 해가 바뀌어도 하나의 그래프로 계속 이어져요.</div>' +
-      '<div id="assetChartHost"></div>';
-    mainArea.appendChild(assetCard);
-    renderSimpleLineChart(
-      document.getElementById("assetChartHost"),
-      monthly.map(function(m){ return { label: m.key, value: m.snap.totalAsset }; }),
-      "--s-vr", fmtCurrency
-    );
-    if (monthly.length){
-      var assetRows = monthly.map(function(m, i){
-        var prev = i>0 ? monthly[i-1].snap.totalAsset : null;
-        var delta = prev!=null ? m.snap.totalAsset - prev : null;
-        return '<tr>' +
-          '<td data-label="월">' + m.key + '</td>' +
-          '<td class="num" data-label="총자산">' + fmtCurrency(m.snap.totalAsset) + '</td>' +
-          '<td class="num" data-label="전월대비" style="color:' + (delta==null?"var(--ink-soft)":pnlRowColor(delta)) + '">' + (delta==null?"–":((delta>0?"+":"")+fmtCurrency(delta))) + '</td>' +
-          '</tr>';
-      }).join("");
-      assetCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>';
-    }
 
     var pnlMonthCard = document.createElement("div");
     pnlMonthCard.className = "card";
