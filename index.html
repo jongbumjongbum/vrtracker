@@ -950,7 +950,7 @@
       '<h3>새 사이클 입력</h3>' +
       '<div class="card-desc">직전 사이클의 체결 결과(보유수량·현재가)와 이번 사이클 적립/인출금을 입력하면 다음 매수가·매도가·매수한도가 자동 계산돼요.</div>' +
       '<h3 style="margin-top:16px;font-size:14px;">지금 걸어둘 주문표</h3>' +
-      '<div class="card-desc">전부 체결되면 E가 V로 돌아와요. 한 가격에 몰아서 걸지 않고 현재가~밴드가 사이에 최대 ' + MAX_LADDER_TRANCHES + '단계로 나눠서 지정가(limit) 주문을 걸도록 분할했어요. 수량은 항상 정수예요.</div>' +
+      '<div class="card-desc">전부 체결되면 E가 V로 돌아와요. 한 가격에 몰아서 걸지 않고 현재가~밴드가 사이를 지정가(limit) 주문 여러 개로 나눴어요 — 가격 간격이 항상 $' + MAX_LADDER_PRICE_STEP + ' 이내가 되도록 단계 수를 자동으로 맞춰요. 수량은 항상 정수예요.</div>' +
       renderOrderTable(inst, last, buyBand, sellBand, limit) +
       '<div class="preview-band" style="display:none;">' +
         '<span><b>지금 활성화된 밴드</b></span>' +
@@ -1296,23 +1296,22 @@
     });
   }
 
-  var MAX_LADDER_TRANCHES = 4;
+  var MAX_LADDER_PRICE_STEP = 1; // dollars — consecutive tranche prices stay within this gap
 
-  // Splits a total dollar amount into up to `maxN` limit-order tranches at
-  // linearly-spaced prices from priceStart (near today's price) down/up to
-  // priceEnd (the exact band price). Working in dollars-per-tranche (not
-  // shares-per-tranche) keeps the total capital deployed close to
-  // totalDollars regardless of how the price path actually unfolds, and
-  // naturally buys more shares at the cheaper tranches. Quantities are
-  // always whole shares.
-  // Splits a total whole-share quantity evenly across up to `maxN` limit-order
-  // tranches at linearly-spaced prices from priceStart (near today's price) to
-  // priceEnd (the exact band price). Every tranche gets the same share count
-  // except possibly the last, which absorbs the remainder.
-  function buildLadder(totalQty, priceStart, priceEnd, maxN){
+  // Splits a total whole-share quantity evenly across limit-order tranches at
+  // linearly-spaced prices from priceStart (near today's price) to priceEnd
+  // (the exact band price). The tranche count is chosen so consecutive
+  // tranche prices never differ by more than maxPriceStep dollars — more
+  // tranches for a wider price range, fewer for a narrow one — capped by the
+  // whole-share quantity available (each tranche needs at least 1 share).
+  // Every tranche gets the same share count except possibly the last, which
+  // absorbs the remainder.
+  function buildLadder(totalQty, priceStart, priceEnd, maxPriceStep){
     totalQty = Math.floor(Math.max(0, totalQty));
     if (totalQty <= 0 || !(priceStart > 0) || !(priceEnd > 0)) return [];
-    var n = (priceStart === priceEnd) ? 1 : Math.max(1, Math.min(maxN, totalQty));
+    var priceRange = Math.abs(priceEnd - priceStart);
+    var neededN = priceRange > 0 ? Math.ceil(priceRange / maxPriceStep) : 1;
+    var n = Math.max(1, Math.min(neededN, totalQty));
     var base = Math.floor(totalQty / n);
     var remainder = totalQty - base * n;
     var tranches = [];
@@ -1341,13 +1340,13 @@
       var sellQtyTotal = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPrice), qty));
       var buyStart = (refNow != null && refNow > buyPrice) ? refNow : buyPrice;
       var sellStart = (refNow != null && refNow < sellPrice) ? refNow : sellPrice;
-      buyTranches = buildLadder(buyQtyTotal, buyStart, buyPrice, MAX_LADDER_TRANCHES);
-      sellTranches = buildLadder(sellQtyTotal, sellStart, sellPrice, MAX_LADDER_TRANCHES);
+      buyTranches = buildLadder(buyQtyTotal, buyStart, buyPrice, MAX_LADDER_PRICE_STEP);
+      sellTranches = buildLadder(sellQtyTotal, sellStart, sellPrice, MAX_LADDER_PRICE_STEP);
       if ((V - buyBand) > buyLimitAmt + 0.01) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 금액보다 적게 매수돼요.';
     } else {
       var refPrice = refNow || inst.initPrice || 0;
       if (refPrice > 0){
-        buyTranches = buildLadder(Math.floor(buyLimitAmt/refPrice), refPrice, refPrice, 1);
+        buyTranches = buildLadder(Math.floor(buyLimitAmt/refPrice), refPrice, refPrice, MAX_LADDER_PRICE_STEP);
         note = '보유수량 0 — 이번엔 가격 상관없이 무조건 매수예요.';
       }
     }
