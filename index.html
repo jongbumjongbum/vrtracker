@@ -996,11 +996,11 @@
     if (n == null || isNaN(n)) return "–";
     var sign = n < 0 ? "-" : "";
     n = Math.abs(n);
-    return sign + "$" + n.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    return sign + "$" + n.toLocaleString("en-US", {minimumFractionDigits:4, maximumFractionDigits:4});
   }
   function fmtMoney0(n){
     if (n == null || isNaN(n)) return "–";
-    return (n<0?"-":"") + "$" + Math.abs(Math.round(n)).toLocaleString("en-US");
+    return (n<0?"-":"") + "$" + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:4, maximumFractionDigits:4});
   }
   function fmtPct(n, d){
     if (n == null || isNaN(n)) return "–";
@@ -1321,7 +1321,7 @@
     if (usdAmount == null || isNaN(usdAmount)) return "–";
     if (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw){
       var krw = usdAmount * state.fx.usdkrw;
-      return (krw<0?"-":"") + "₩" + Math.abs(Math.round(krw)).toLocaleString("ko-KR");
+      return (krw<0?"-":"") + "₩" + Math.abs(krw).toLocaleString("ko-KR", {minimumFractionDigits:4, maximumFractionDigits:4});
     }
     return fmtMoney0(usdAmount);
   }
