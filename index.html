@@ -170,6 +170,11 @@
       text-align: left; flex: 0 0 auto;
     }
     table.stack-mobile td:empty, table.stack-mobile td[data-label=""] { display: none; }
+    /* The stacked card layout has no horizontal scroll, so the pinned action
+       column would only misplace the button — put it back in normal flow. */
+    table.stack-mobile td.col-action, table.stack-mobile th.col-action {
+      position: static; box-shadow: none; background: transparent;
+    }
     table.stack-mobile .cell-input { width: auto; max-width: 130px; }
   }
 
@@ -287,6 +292,11 @@
   th, td { text-align: right; padding: 7px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; position: sticky; top: 0; background: var(--panel); }
+  /* Wide tables scroll sideways on desktop, which would park the row's action
+     button past the right edge where it's easy to miss. Pin that column so it
+     stays reachable no matter how far the table is scrolled. */
+  td.col-action { position: sticky; right: 0; z-index: 2; background: var(--panel); box-shadow: -8px 0 8px -8px rgba(10,12,16,.28); }
+  th.col-action { right: 0; z-index: 3; box-shadow: -8px 0 8px -8px rgba(10,12,16,.28); }
   tbody tr:hover { background: var(--panel-2); }
   td.num, th.num { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 
@@ -3087,12 +3097,12 @@
         '<td class="num" data-label="다음매수↓">' + fmtMoney0(c.buyBandNext) + '</td>' +
         '<td class="num" data-label="다음매도↑">' + fmtMoney0(c.sellBandNext) + '</td>' +
         '<td class="num" data-label="Pool">' + fmtMoney0(c.Pool) + '</td>' +
-        '<td><button type="button" class="btn btn-sm btn-ghost btn-danger cyc-del">삭제</button></td>' +
+        '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost btn-danger cyc-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>사이클 시작일</th><th>다음 시작 예정</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
-      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th></th>' +
+      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th class="col-action"></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
       '<div class="footnote" style="margin-top:6px;">각 줄의 날짜는 <b>그 사이클이 시작된 날</b>이에요. 그 줄의 V·밴드는 이 사이클 동안 쓰는 기준값이고, 다음 줄은 "다음 시작 예정"일에 입력하면 돼요.</div>';
   }
