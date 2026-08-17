@@ -101,18 +101,25 @@
      instead of one being buried under the other. */
   .alloc-wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
   .alloc-legend { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  /* Numbers must never be cut, so the numeric cells size to their own content
+     and refuse to shrink; only the ticker name gives way (with an ellipsis). */
   .alloc-row {
-    display: grid; grid-template-columns: minmax(64px,1.1fr) minmax(70px,1fr) 44px minmax(88px,1.2fr);
-    align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px;
+    display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px;
     font-variant-numeric: tabular-nums;
   }
+  .alloc-val, .alloc-pct, .alloc-pnl { flex: 0 0 auto; }
   .alloc-row-head {
     border-bottom: 1px solid var(--line); padding-bottom: 5px; margin-bottom: 3px;
     font-weight: 700; font-size: 13px;
   }
-  .alloc-name { display: flex; align-items: center; gap: 6px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .alloc-name {
+    display: flex; align-items: center; gap: 6px; font-weight: 600;
+    flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  }
   .alloc-name .swatch { width: 9px; height: 9px; border-radius: 99px; flex: 0 0 auto; }
-  .alloc-val, .alloc-pct, .alloc-pnl { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alloc-name > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .alloc-val, .alloc-pct, .alloc-pnl { text-align: right; white-space: nowrap; }
+  .alloc-val { margin-left: auto; }
   .alloc-pct { color: var(--ink-soft); }
   @media (max-width: 860px) {
     /* Keep the whole breakdown on one phone screen: shrink the donut, drop the
@@ -120,18 +127,12 @@
     .alloc-wrap { gap: 12px; }
     .alloc-wrap > svg { width: 132px; height: 132px; margin: 0 auto; }
     .alloc-legend { flex: 1 1 100%; }
-    /* Four columns of 4-decimal figures can't fit a phone without clipping, so
-       the P/L drops to its own right-aligned line under each row. */
-    .alloc-row {
-      font-size: 12px; gap: 2px 6px; padding: 3px 0;
-      grid-template-columns: minmax(0,1fr) auto 42px;
-      grid-template-areas: "name val pct" "pnl pnl pnl";
-    }
-    .alloc-name { grid-area: name; }
-    .alloc-val  { grid-area: val; }
-    .alloc-pct  { grid-area: pct; }
-    .alloc-pnl  { grid-area: pnl; font-size: 11.5px; }
-    .alloc-row-head { font-size: 12.5px; }
+    /* Give the P/L column a fixed floor wide enough for "-$42,877.07 (131.8%)"
+       and let the name/value columns absorb what's left. */
+    .alloc-row { font-size: 11.5px; gap: 5px; padding: 2px 0; }
+    /* Header is bold, so it needs the same width budget — keep its size equal
+       to the body rows rather than a notch larger. */
+    .alloc-row-head { font-size: 11.5px; }
   }
 
   .guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
@@ -1474,13 +1475,21 @@
     return changed;
   }
 
-  function fmtCurrency(usdAmount){
+  function fmtCurrencyDigits(usdAmount, digits){
     if (usdAmount == null || isNaN(usdAmount)) return "–";
+    var opts = { minimumFractionDigits: digits, maximumFractionDigits: digits };
     if (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw){
       var krw = usdAmount * state.fx.usdkrw;
-      return (krw<0?"-":"") + "₩" + Math.abs(krw).toLocaleString("ko-KR", {minimumFractionDigits:4, maximumFractionDigits:4});
+      return (krw<0?"-":"") + "₩" + Math.abs(krw).toLocaleString("ko-KR", opts);
     }
-    return fmtMoney0(usdAmount);
+    return (usdAmount<0?"-":"") + "$" + Math.abs(usdAmount).toLocaleString("en-US", opts);
+  }
+  function fmtCurrency(usdAmount){ return fmtCurrencyDigits(usdAmount, 4); }
+  // 자산배분 범례는 이름·평가금·비중·손익을 한 줄에 담아야 해서 자릿수를 줄인다.
+  // 원화는 관례대로 소수점을 안 쓰고(그리고 자릿수가 훨씬 길어서) 0자리.
+  function fmtCurrency2(usdAmount){
+    var isKrw = (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw);
+    return fmtCurrencyDigits(usdAmount, isKrw ? 0 : 2);
   }
 
   /* ---------------- rendering ---------------- */
@@ -2621,6 +2630,7 @@
         var valPerShare = qty > 0 ? tickerValues[t]/qty : 0;
         var profit = costQty*valPerShare - cost;
         s.profit = profit;
+        s.cost = cost;
         s.profitPct = cost > 0 ? (profit/cost*100) : null;
         s.partial = costQty < qty;
       }
@@ -2981,7 +2991,7 @@
       else { color = ALLOC_CATEGORICAL[catIdx % ALLOC_CATEGORICAL.length]; catIdx++; }
       return {
         label: s.label, value: s.value, pct: s.value/total*100, color: color,
-        isCash: !!s.isCash, profit: s.profit, profitPct: s.profitPct, partial: s.partial
+        isCash: !!s.isCash, profit: s.profit, cost: s.cost, profitPct: s.profitPct, partial: s.partial
       };
     });
 
@@ -3000,7 +3010,7 @@
     var svg =
       '<svg viewBox="0 0 180 180" width="180" height="180" style="flex:0 0 auto;">' + arcs +
         '<text x="' + cx + '" y="' + (cy-16) + '" text-anchor="middle" font-size="12" fill="var(--muted)">총자산</text>' +
-        '<text x="' + cx + '" y="' + (cy+2) + '" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">' + fmtCurrency(total) + '</text>' +
+        '<text x="' + cx + '" y="' + (cy+2) + '" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">' + fmtCurrency2(total) + '</text>' +
         '<text x="' + cx + '" y="' + (cy+20) + '" text-anchor="middle" font-size="12" fill="var(--muted)">' + escapeHtml(topLabel) + '</text>' +
       '</svg>';
 
@@ -3008,33 +3018,35 @@
     // row so the stock/cash split is readable without adding up the slices.
     var stockValue = colored.reduce(function(a,s){ return a + (s.isCash ? 0 : s.value); }, 0);
     var stockPct = total > 0 ? (stockValue/total*100) : 0;
-    var stockProfit = 0, anyProfit = false, anyPartial = false;
+    var stockProfit = 0, stockCost = 0, anyProfit = false, anyPartial = false;
     colored.forEach(function(s){
-      if (s.profit != null){ stockProfit += s.profit; anyProfit = true; }
+      if (s.profit != null){ stockProfit += s.profit; stockCost += (s.cost || 0); anyProfit = true; }
       if (s.partial) anyPartial = true;
     });
+    var stockProfitPct = stockCost > 0 ? (stockProfit/stockCost*100) : null;
     function pcolor(p){ return p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : "var(--ink-soft)"); }
     function profitCell(s){
       if (s.isCash) return '<span class="alloc-pnl footnote">–</span>';
       if (s.profit == null) return '<span class="alloc-pnl footnote">평단 미입력</span>';
       return '<span class="alloc-pnl" style="color:' + pcolor(s.profit) + '">' +
-        fmtCurrency(s.profit) + (s.profitPct != null ? (' (' + fmtPct(s.profitPct,1) + ')') : '') +
+        fmtCurrency2(s.profit) + (s.profitPct != null ? (' (' + fmtPct(s.profitPct,1) + ')') : '') +
         (s.partial ? '<span class="footnote">*</span>' : '') + '</span>';
     }
 
     var legend = '<div class="alloc-legend">' +
       '<div class="alloc-row alloc-row-head">' +
-        '<span class="alloc-name">주식 평가금</span>' +
-        '<span class="alloc-val num">' + fmtCurrency(stockValue) + '</span>' +
+        '<span class="alloc-name"><span>주식합계</span></span>' +
+        '<span class="alloc-val num">' + fmtCurrency2(stockValue) + '</span>' +
         '<span class="alloc-pct num">' + stockPct.toFixed(1) + '%</span>' +
         (anyProfit
-          ? ('<span class="alloc-pnl" style="color:' + pcolor(stockProfit) + '">' + fmtCurrency(stockProfit) + '</span>')
+          ? ('<span class="alloc-pnl" style="color:' + pcolor(stockProfit) + '">' + fmtCurrency2(stockProfit) +
+             (stockProfitPct != null ? (' (' + fmtPct(stockProfitPct,1) + ')') : '') + '</span>')
           : '<span class="alloc-pnl footnote">–</span>') +
       '</div>' +
       colored.map(function(s){
         return '<div class="alloc-row">' +
-          '<span class="alloc-name"><span class="swatch" style="background:' + s.color + ';"></span>' + escapeHtml(s.label) + '</span>' +
-          '<span class="alloc-val num">' + fmtCurrency(s.value) + '</span>' +
+          '<span class="alloc-name"><span class="swatch" style="background:' + s.color + ';"></span><span>' + escapeHtml(s.label) + '</span></span>' +
+          '<span class="alloc-val num">' + fmtCurrency2(s.value) + '</span>' +
           '<span class="alloc-pct num">' + s.pct.toFixed(1) + '%</span>' +
           profitCell(s) +
         '</div>';
