@@ -1698,35 +1698,36 @@
       render();
     });
 
-    // cycle entry card
-    var entryCard = document.createElement("div");
-    entryCard.className = "card";
-    entryCard.innerHTML =
-      (viewingPast ? '' :
-        '<h3>새 사이클 입력</h3>' +
-        '<div class="card-desc">아래 주문표대로 매매했다면 체결내역에 한 줄씩 추가하고, 안 했다면(홀드) 비워둔 채로 오늘 종가만 입력하세요. 그러면 다음 사이클의 매수가·매도가·매수한도가 자동으로 다시 계산돼요.</div>') +
-      '<h3 style="margin-top:16px;font-size:14px;">' + (viewingPast ? '그때 걸었어야 할 주문표' : '지금 걸어둘 주문표') + '</h3>' +
-      '<div class="card-desc">아래 표대로 지정가 주문을 걸어두세요. 매수는 매수한도(Pool%) 안에서, 매도는 E가 V로 돌아오는 지점까지예요.' +
-        (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ', 표 계산에는 안 쓰여요)</span>') : '') +
+    // ① 주문표 — what to actually go place with the broker right now. Kept in
+    // its own card and first, because it's the thing looked at every day; the
+    // recording form below is only touched once per cycle.
+    var orderCard = document.createElement("div");
+    orderCard.className = "card";
+    orderCard.innerHTML =
+      '<h3>' + (viewingPast ? '이 사이클에 걸었던 주문표' : '① 이번 사이클 주문표 — 지금 걸어두세요') + '</h3>' +
+      '<div class="card-desc">아래 가격에 지정가 주문을 걸어두세요. 매수는 매수한도(Pool ' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(round2(last.Pool * (limit.buyPct/100))) + ') 안에서, 매도는 평가금(E)이 V로 돌아오는 지점까지예요.' +
+        (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ' — 표 계산에는 안 쓰여요)</span>') : '') +
       '</div>' +
       '<div class="field" style="max-width:220px;margin-bottom:12px;"><label>분할 수량 (주, 직접입력)</label>' +
         '<input id="trancheSizeInput" type="number" step="1" min="1" class="cell-input" style="width:100%;" value="' + (inst.trancheSize || DEFAULT_TRANCHE_SIZE) + '" /></div>' +
-      renderOrderTable(inst, last, buyBand, sellBand, limit) +
-      '<div class="preview-band" style="display:none;">' +
-        '<span><b>지금 활성화된 밴드</b></span>' +
-        '<span>매수가 ↓ <b>' + fmtMoney0(buyBand) + '</b></span>' +
-        '<span>매도가 ↑ <b>' + fmtMoney0(sellBand) + '</b></span>' +
-        '<span>매수한도 <b>' + fmtMoney0(round2(last.Pool * (limit.buyPct/100))) + '</b> (' + limit.buyPct.toFixed(0) + '%)</span>' +
-      '</div>' +
-      (viewingPast ? '' :
+      renderOrderTable(inst, last, buyBand, sellBand, limit);
+    mainArea.appendChild(orderCard);
+
+    // ②③ 마감 기록 — filled in once, at the end of the cycle.
+    if (!viewingPast){
+      var entryCard = document.createElement("div");
+      entryCard.className = "card";
+      entryCard.innerHTML =
+        '<h3>② 위 주문표로 체결된 내역</h3>' +
+        '<div class="card-desc">위 표대로 체결된 것만 한 줄씩 추가하세요. 아무것도 안 걸렸으면(홀드) 비워두면 돼요.</div>' +
+        '<div id="fillsListHost"></div>' +
+        '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="addFillBtn" type="button">+ 체결 추가</button></div>' +
+
+        '<h3 style="margin-top:22px;">③ 사이클 마감 정보</h3>' +
+        '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
-          field('이번 사이클 시작일 <span class="hint">이 날짜부터 새 사이클이 시작돼요 (' + inst.cycleDays + '일 주기)</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
-          field('오늘 종가 ($) <span class="hint">' + inst.ticker + ' 종가 — 이 사이클 끝 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
-        '</div>' +
-        '<div style="margin-top:14px;">' +
-          '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">이번 사이클 체결내역 <span class="hint">매매 안 했으면(홀드) 비워두세요. 여러 번 나눠 샀거나, 사고팔고 둘 다 했으면 한 줄씩 추가하세요</span></label>' +
-          '<div id="fillsListHost"></div>' +
-          '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="addFillBtn" type="button">+ 체결 추가</button></div>' +
+          field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
+          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" step="0.01" placeholder="예: 74.47" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
           field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" step="0.01" value="0" />') +
@@ -1734,8 +1735,9 @@
           field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" step="0.01" placeholder="비교차트용" />') +
         '</div>' +
         '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
-        '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 기록하기</button></div>');
-    mainArea.appendChild(entryCard);
+        '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 마감하고 기록하기</button></div>';
+      mainArea.appendChild(entryCard);
+    }
 
     document.getElementById("trancheSizeInput").addEventListener("change", function(){
       var v = parseInt(this.value, 10);
