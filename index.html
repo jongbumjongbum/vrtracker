@@ -1255,6 +1255,12 @@
   var TWELVEDATA_KEY = "9d7a1fad48604a07874cb77f737f3557";
   var LIVE_PRICE_CACHE = {};
   var LIVE_PRICE_TTL_MS = 5*60*1000;
+  // The free-tier key is capped at 8 credits/minute, so any burst (e.g. the
+  // Portfolio tab fetching several tickers in one call) trips a 429. Caching
+  // that failure for the full 5-minute TTL made a transient rate-limit look
+  // like a permanently broken "실시간" price — retry failures much sooner so
+  // it recovers within the same per-minute window instead.
+  var LIVE_PRICE_FAIL_TTL_MS = 20*1000;
 
   function getLivePrice(ticker){
     var c = LIVE_PRICE_CACHE[ticker];
@@ -1267,6 +1273,7 @@
     tickers.forEach(function(t){ if (t && uniq.indexOf(t)===-1) uniq.push(t); });
     var need = uniq.filter(function(t){
       var c = LIVE_PRICE_CACHE[t];
+      if (c && c.failed) return (now - c.ts) > LIVE_PRICE_FAIL_TTL_MS;
       return !c || (now - c.ts) > LIVE_PRICE_TTL_MS;
     });
     if (!need.length) return false;
