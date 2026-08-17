@@ -99,6 +99,29 @@
   .action-bar { display: none; }
   /* 매수 / 매도 side by side, so both sides of the band are readable at once
      instead of one being buried under the other. */
+  .guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .guide-card {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    background: var(--panel-2); cursor: pointer; text-align: left;
+  }
+  .guide-card:hover { border-color: var(--accent); }
+  .guide-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .guide-ticker { font-size: 16px; font-weight: 700; }
+  .guide-meta { display: flex; gap: 12px; font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; flex-wrap: wrap; }
+  .guide-body { border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+  .guide-body.buy { background: var(--sell-soft); }
+  .guide-body.sell { background: var(--buy-soft); }
+
+  .order-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 8px 0 4px; }
+  .order-head-price { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .order-head-qty { font-size: 15px; font-weight: 600; color: var(--ink-soft); }
+  .order-tail { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px; }
+  .order-tail-row {
+    display: flex; justify-content: space-between; gap: 10px;
+    font-size: 12.5px; color: var(--ink-soft); padding: 3px 0;
+    font-variant-numeric: tabular-nums;
+  }
+
   .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
@@ -1958,9 +1981,69 @@
     });
   }
 
+  // Every 무매's orders for today, in one glance, so running several at once
+  // doesn't mean opening each one to find out what to place.
+  function renderMuTodayGuide(){
+    if (state.muInstances.length < 1) return;
+    var card = document.createElement("div");
+    card.className = "card";
+    var cards = state.muInstances.map(function(m){
+      var l = muLastState(m);
+      var plan = muOrderPlan(m, l);
+      var progress = Math.min(100, (l.T/m.splitCount)*100);
+      var body;
+      if (plan.mode === "reverse" && plan.firstDay){
+        body = '<div class="guide-body sell"><div class="footnote">리버스 전환 첫날 · MOC 매도</div>' +
+          '<div class="order-head"><span class="order-head-price">' + plan.sellQty + '주</span><span class="order-head-qty">종가매도</span></div></div>';
+      } else if (plan.mode === "reverse"){
+        body = '<div class="guide-body buy"><div class="footnote">쿼터매수 (LOC)</div>' + muLadderRowsHtml(plan.buyLadder, plan.avgCost) + '</div>' +
+          '<div class="guide-body sell"><div class="footnote">매도 (LOC)</div>' +
+          '<div class="order-head"><span class="order-head-price">' + (plan.sellPrice!=null?fmtMoney(plan.sellPrice):"–") + '</span><span class="order-head-qty">× ' + plan.sellQty + '주</span></div></div>';
+      } else {
+        body = (plan.buyLadders||[]).map(function(lad){
+          return '<div class="guide-body buy"><div class="footnote">' + lad.label + ' 매수 (LOC)</div>' + muLadderRowsHtml(lad.rows, plan.avgCost) + '</div>';
+        }).join("") +
+        '<div class="guide-body sell"><div class="footnote">매도</div>' +
+          '<div class="order-tail-row"><span>쿼터매도 LOC <b>' + (plan.sellQuarterPrice!=null?fmtMoney(plan.sellQuarterPrice):"–") + '</b> × ' + plan.sellQuarterQty + '주</span></div>' +
+          '<div class="order-tail-row"><span>나머지 지정가 <b>' + (plan.sellRestPrice!=null?fmtMoney(plan.sellRestPrice):"–") + '</b> × ' + plan.sellRestQty + '주</span></div>' +
+        '</div>';
+      }
+      return '<div class="guide-card" data-mu-id="' + m.id + '">' +
+        '<div class="guide-top">' +
+          '<span class="guide-ticker">' + escapeHtml(m.ticker) + '</span>' +
+          '<span class="footnote">' + escapeHtml(m.name) + '</span>' +
+        '</div>' +
+        '<div class="guide-meta"><span>평단 <b>' + (l.avgCost>0?fmtMoney(l.avgCost):"–") + '</b></span>' +
+          '<span>보유 <b>' + (l.qty||0) + '주</b></span>' +
+          '<span>' + progress.toFixed(1) + '%</span></div>' +
+        '<div class="limit-track" style="margin-bottom:8px;"><div class="limit-fill" style="width:' + progress.toFixed(1) + '%"></div></div>' +
+        body +
+      '</div>';
+    }).join("");
+    card.innerHTML = '<h3>오늘의 매수/매도 가이드</h3>' +
+      '<div class="card-desc">운용 중인 무매 전부의 오늘 걸 주문이에요. 카드를 누르면 그 무매로 이동해요.</div>' +
+      '<div class="guide-grid">' + cards + '</div>';
+    mainArea.appendChild(card);
+    Array.prototype.forEach.call(card.querySelectorAll(".guide-card"), function(el){
+      el.addEventListener("click", function(){
+        state.muSelectedId = el.getAttribute("data-mu-id");
+        saveState();
+        render();
+      });
+    });
+  }
+
   function renderMuDetail(){
     var inst = state.muInstances.find(function(i){ return i.id === state.muSelectedId; });
     if (!inst){
+      if (state.muInstances.length){
+        renderMuTodayGuide();
+        var hint = document.createElement("div");
+        hint.className = "footnote";
+        hint.textContent = "위 카드를 누르거나 왼쪽 목록에서 무매를 선택하면 자세히 볼 수 있어요.";
+        mainArea.appendChild(hint);
+        return;
+      }
       mainArea.innerHTML =
         '<div class="empty-state">' +
         '<h2>운용 중인 무매를 선택하거나 새로 만들어보세요</h2>' +
@@ -1970,6 +2053,7 @@
       document.getElementById("emptyNewMuBtn").addEventListener("click", openNewMuModal);
       return;
     }
+    if (state.muInstances.length > 1) renderMuTodayGuide();
     // Stepping back shows that day's own recorded snapshot; the newest record
     // (or the seeded initial state) is the live, editable view.
     var histIdx = historyView[inst.id];
@@ -2088,15 +2172,29 @@
     return '<span style="color:' + color + '">' + (p>0?"+":"") + p.toFixed(2) + '%</span>';
   }
 
+  // The first rung is the order actually being placed today; everything under
+  // it only fires if the price collapses. Rendering them as one flat table
+  // made a crash contingency look as immediate as the real order, so the head
+  // is called out and the tail is folded under a "폭락장 대비" label.
   function muLadderRowsHtml(rows, avgCost){
     if (!rows || !rows.length) return '<div class="footnote">계산 불가 (평단·잔금 정보가 아직 부족해요)</div>';
-    return '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th class="num">가격</th><th class="num">평단대비</th><th class="num">수량</th></tr></thead><tbody>' +
-      rows.map(function(r){
-        return '<tr><td class="num" data-label="가격">' + fmtMoney(r.price) + '</td>' +
-          '<td class="num" data-label="평단대비">' + vsAvgCell(r.price, avgCost) + '</td>' +
-          '<td class="num" data-label="수량">' + r.qty + '주</td></tr>';
-      }).join("") +
-      '</tbody></table></div>';
+    var head = rows[0], tail = rows.slice(1);
+    var html =
+      '<div class="order-head">' +
+        '<span class="order-head-price">' + fmtMoney(head.price) + '</span>' +
+        '<span class="order-head-qty">× ' + head.qty + '주</span>' +
+        '<span class="footnote">' + vsAvgCell(head.price, avgCost) + '</span>' +
+      '</div>';
+    if (tail.length){
+      html += '<div class="order-tail">' +
+        '<div class="footnote" style="margin-bottom:4px;">+@ 폭락장 대비 추가 매수 <span class="hint">아래로 떨어지면 그때 체결돼요</span></div>' +
+        tail.map(function(r){
+          return '<div class="order-tail-row"><span>LOC <b>' + fmtMoney(r.price) + '</b> × ' + r.qty + '주</span>' +
+            '<span class="footnote">' + vsAvgCell(r.price, avgCost) + '</span></div>';
+        }).join("") +
+      '</div>';
+    }
+    return html;
   }
 
   function renderMuOrderPlan(plan){
@@ -2396,7 +2494,13 @@
 
     stats.innerHTML =
       stat("총 자산 (주식+예수금)", fmtCurrency(grandTotal)) +
-      stat("주식 평가금", fmtCurrency(stockTotal)) +
+      // 평가금과 그 평가금이 품고 있는 미실현손익은 같이 봐야 의미가 있어서 한 칸에 둠
+      '<div class="stat"><div class="label">주식 평가금 · 미실현수익금(수익률)' +
+        (vrProfit==null ? ' <span class="hint">VR 실제평단 미입력분 제외</span>' : '') + '</div>' +
+        '<div class="value num">' + fmtCurrency(stockTotal) + '</div>' +
+        '<div class="value num" style="font-size:15px;margin-top:2px;color:' + (pfPnlColor(totalProfitAll) || "var(--ink-soft)") + '">' +
+          pnlCombined(totalProfitAll, totalProfitAllPct) + '</div>' +
+      '</div>' +
       stat("예수금 합계 (아래 둘의 합, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
       stat("└ 그외 예수금 (직접입력+무매 잔금)", fmtCurrency(otherCashTotal)) +
@@ -2405,7 +2509,6 @@
         'value="' + extraCash + '" placeholder="예: 500" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
       stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit)) +
-      stat("모든보유주식 미실현수익금(수익률)" + (vrProfit==null?" (VR 실제평단 미입력분 제외)":""), pnlCombined(totalProfitAll, totalProfitAllPct), false, pfPnlColor(totalProfitAll)) +
       stat("실현손익 합계 (VR+그외, 매도로 확정된 손익)", fmtCurrency(totalRealized), false, pfPnlColor(totalRealized)) +
       stat("└ VR 실현손익", fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
       stat("└ 그외 실현손익", fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
@@ -3244,7 +3347,12 @@
       sellRestQty: restQty, sellRestPrice: restPrice
     };
     if (last.qty === 0){
-      plan.buyLadders = [{ label: "첫매수", rows: muBuildAnchorLadder(buyTrigger || round2((last.close||0)*1.12), dailyAmt) }];
+      // 첫매수는 평단이 없어 ★지점을 못 구하므로 "종가보다 적당히 위" 가격에
+      // 큰수매수를 건다. 새로 만든 무매는 기록된 종가가 아직 없으니 실시간
+      // 시세로 대체 — 안 그러면 정작 첫 주문이 필요한 시점에 표가 비어버린다.
+      var seedPrice = last.close || getLivePrice(inst.ticker) || 0;
+      plan.firstBuyRef = seedPrice;
+      plan.buyLadders = [{ label: "첫매수(큰수)", rows: muBuildAnchorLadder(buyTrigger || round2(seedPrice*1.12), dailyAmt) }];
     } else if (last.half === "front"){
       plan.buyLadders = [
         { label: "★지점", rows: muBuildAnchorLadder(buyTrigger, round2(dailyAmt/2)) },
