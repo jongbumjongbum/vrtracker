@@ -977,7 +977,10 @@
     var Vprev = prevCycleOrInit.Vnext;
     var Poolprev = prevCycleOrInit.Pool;
     var Qprev = prevCycleOrInit.qty;
-    var G = currentG(inst, input.date);
+    // forceG replays a record with the G it was originally saved under — G is
+    // derived from mutable approval state, so recomputing it during a replay
+    // could silently rewrite history that already happened at a different G.
+    var G = (input.forceG != null) ? input.forceG : currentG(inst, input.date);
     var fills = input.fills || [];
     var buyQty = 0, buyCost = 0, sellQty = 0, sellProceeds = 0;
     fills.forEach(function(f){
@@ -1040,6 +1043,28 @@
 
   function instanceInitPseudoCycle(inst){
     return { Vnext: inst.initV, Pool: inst.initPool, qty: inst.initQty, E: round2((inst.initQty||0) * (inst.initPrice||0)) };
+  }
+
+  // Every cycle's V/Pool/bands are derived from the one before it, so removing
+  // a record in the middle invalidates everything after it. This re-runs the
+  // chain from the seed state using each remaining cycle's own recorded
+  // inputs (date, close, fills, deposit) so the history stays self-consistent.
+  function replayCycles(inst){
+    var prev = instanceInitPseudoCycle(inst);
+    inst.cycles = inst.cycles.map(function(c){
+      var res = computeCycle(inst, prev, {
+        date: c.date,
+        closePrice: c.price,
+        fills: (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c),
+        deposit: c.deposit,
+        spy: c.spy,
+        qqq: c.qqq,
+        forceG: c.G
+      });
+      res.id = c.id;
+      prev = res;
+      return res;
+    });
   }
   function lastState(inst){
     if (inst.cycles.length === 0) return instanceInitPseudoCycle(inst);
@@ -1663,7 +1688,7 @@
       '</div>' +
       (viewingPast ? '' :
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
-          field('이번 사이클 날짜 <span class="hint">보통 매매(또는 홀드 확인)한 날</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
+          field('이번 사이클 시작일 <span class="hint">이 날짜부터 새 사이클이 시작돼요 (' + inst.cycleDays + '일 주기)</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
           field('오늘 종가 ($) <span class="hint">' + inst.ticker + ' 종가 — 이 사이클 끝 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" step="0.01" placeholder="' + inst.ticker + ' 종가" />') +
         '</div>' +
         '<div style="margin-top:14px;">' +
@@ -1728,6 +1753,27 @@
     histCard.className = "card";
     histCard.innerHTML = '<h3>사이클 기록</h3>' + renderHistoryTable(inst);
     mainArea.appendChild(histCard);
+
+    Array.prototype.forEach.call(histCard.querySelectorAll(".cyc-del"), function(btn){
+      btn.addEventListener("click", function(){
+        var tr = btn.closest("tr");
+        var cid = tr.getAttribute("data-cycle-id");
+        var idx = inst.cycles.findIndex(function(c){ return c.id === cid; });
+        if (idx === -1) return;
+        var target = inst.cycles[idx];
+        var after = inst.cycles.length - 1 - idx;
+        var msg = fmtDate(target.date) + " 사이클 기록을 삭제할까요?";
+        if (after > 0) msg += "\n\n뒤에 있는 " + after + "개 사이클의 V·Pool·밴드가 이 기록을 기준으로 계산돼 있어서, 삭제 후 자동으로 다시 계산돼요.";
+        if (inst.realAvgCost != null) msg += "\n\n※ 실제평단은 자동으로 되돌아가지 않아요 — 삭제 후 직접 확인해주세요.";
+        if (!confirm(msg)) return;
+        inst.cycles.splice(idx, 1);
+        replayCycles(inst);
+        delete historyView[inst.id];
+        delete sellLadderExpand[inst.id];
+        saveState();
+        render();
+      });
+    });
 
     // wire events
     document.getElementById("poolLimitBtn").addEventListener("click", function(){ openPoolLimitModal(inst); });
@@ -1797,6 +1843,7 @@
       var sigTxt = res.signal === "buy" ? "매수 신호" : (res.signal === "sell" ? "매도 신호" : "홀드");
       box.innerHTML =
         '<span class="signal-badge ' + sigCls + '"><span class="dot"></span>' + sigTxt + '</span>' +
+        '<span>다음 사이클 시작 예정 <b>' + fmtDate(addDaysStr(date, inst.cycleDays)) + '</b></span>' +
         '<span>사이클 종료 후 보유수량 <b>' + res.qty + '주</b></span>' +
         '<span>다음 V <b>' + fmtMoney0(res.Vnext) + '</b></span>' +
         '<span>다음 매수 밴드 <b>' + fmtMoney0(res.buyBandNext) + '</b></span>' +
@@ -2699,6 +2746,10 @@
     });
   }
 
+  function addDaysStr(dateStr, days){
+    var d = new Date(new Date(dateStr).getTime() + days*86400000);
+    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+  }
   function suggestedDate(inst){
     var last = inst.cycles.length ? inst.cycles[inst.cycles.length-1] : null;
     var base = last ? new Date(last.date) : new Date(inst.initDate);
@@ -3022,8 +3073,9 @@
       var fillsTxt = fills.length
         ? [buyN ? ("매수 " + buyN + "건") : null, sellN ? ("매도 " + sellN + "건") : null].filter(Boolean).join(" · ")
         : "–";
-      return '<tr>' +
-        '<td data-label="날짜">' + fmtDate(c.date) + '</td>' +
+      return '<tr data-cycle-id="' + c.id + '">' +
+        '<td data-label="사이클 시작일">' + fmtDate(c.date) + '</td>' +
+        '<td data-label="다음 사이클 시작 예정"><span class="footnote" style="display:inline;">' + fmtDate(addDaysStr(c.date, inst.cycleDays)) + '</span></td>' +
         '<td data-label="신호"><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
         '<td data-label="체결내역">' + fillsTxt + '</td>' +
         '<td class="num" data-label="종가">' + fmtMoney(c.price) + '</td>' +
@@ -3035,12 +3087,14 @@
         '<td class="num" data-label="다음매수↓">' + fmtMoney0(c.buyBandNext) + '</td>' +
         '<td class="num" data-label="다음매도↑">' + fmtMoney0(c.sellBandNext) + '</td>' +
         '<td class="num" data-label="Pool">' + fmtMoney0(c.Pool) + '</td>' +
+        '<td><button type="button" class="btn btn-sm btn-ghost btn-danger cyc-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
-      '<th>날짜</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
-      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<th>사이클 시작일</th><th>다음 시작 예정</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
+      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="footnote" style="margin-top:6px;">각 줄의 날짜는 <b>그 사이클이 시작된 날</b>이에요. 그 줄의 V·밴드는 이 사이클 동안 쓰는 기준값이고, 다음 줄은 "다음 시작 예정"일에 입력하면 돼요.</div>';
   }
 
   /* ---------------- charts (hand-rolled SVG) ---------------- */
