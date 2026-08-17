@@ -1975,6 +1975,10 @@
     var unrealized = round2(evalNow - investedNow);
     var unrealizedPct = investedNow > 0 ? (unrealized/investedNow*100) : null;
     var totalAsset = round2(evalNow + (last.cash||0));
+    // 잔금 already carries every realized gain/loss, so 총자산 − 원금 is the
+    // whole strategy's return to date (실현 + 미실현) measured against the seed.
+    var seedReturn = round2(totalAsset - (inst.principal||0));
+    var seedReturnPct = inst.principal > 0 ? (seedReturn/inst.principal*100) : null;
     // 잔금 already nets out sells, so 원금−잔금 is what's currently deployed
     // into stock — the reading that matters day to day ("시드를 얼마나 썼나").
     var usedSeed = round2(inst.principal - (last.cash||0));
@@ -1997,7 +2001,9 @@
       stat("미실현 수익금(수익률)", (last.qty>0 && investedNow>0)
         ? (fmtMoney0(unrealized) + " (" + fmtPct(unrealizedPct,2) + ")")
         : "–", last.qty<=0, muPnlColor(unrealized)) +
-      stat("총자산 (평가금+잔금)", fmtMoney0(totalAsset)) +
+      stat("총자산 (평가금+잔금) · 시드대비", fmtMoney0(totalAsset) +
+        (seedReturnPct != null ? (" (" + (seedReturn>0?"+":"") + fmtPct(seedReturnPct,2) + ")") : ""),
+        false, muPnlColor(seedReturn)) +
       stat("실현손익", fmtMoney0(last.realizedPL||0), false, muPnlColor(last.realizedPL||0));
     mainArea.appendChild(stats);
 
