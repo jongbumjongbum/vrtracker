@@ -99,6 +99,41 @@
   .action-bar { display: none; }
   /* 매수 / 매도 side by side, so both sides of the band are readable at once
      instead of one being buried under the other. */
+  .alloc-wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+  .alloc-legend { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .alloc-row {
+    display: grid; grid-template-columns: minmax(64px,1.1fr) minmax(70px,1fr) 44px minmax(88px,1.2fr);
+    align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .alloc-row-head {
+    border-bottom: 1px solid var(--line); padding-bottom: 5px; margin-bottom: 3px;
+    font-weight: 700; font-size: 13px;
+  }
+  .alloc-name { display: flex; align-items: center; gap: 6px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .alloc-name .swatch { width: 9px; height: 9px; border-radius: 99px; flex: 0 0 auto; }
+  .alloc-val, .alloc-pct, .alloc-pnl { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alloc-pct { color: var(--ink-soft); }
+  @media (max-width: 860px) {
+    /* Keep the whole breakdown on one phone screen: shrink the donut, drop the
+       type down a notch, and let the four columns compress rather than wrap. */
+    .alloc-wrap { gap: 12px; }
+    .alloc-wrap > svg { width: 132px; height: 132px; margin: 0 auto; }
+    .alloc-legend { flex: 1 1 100%; }
+    /* Four columns of 4-decimal figures can't fit a phone without clipping, so
+       the P/L drops to its own right-aligned line under each row. */
+    .alloc-row {
+      font-size: 12px; gap: 2px 6px; padding: 3px 0;
+      grid-template-columns: minmax(0,1fr) auto 42px;
+      grid-template-areas: "name val pct" "pnl pnl pnl";
+    }
+    .alloc-name { grid-area: name; }
+    .alloc-val  { grid-area: val; }
+    .alloc-pct  { grid-area: pct; }
+    .alloc-pnl  { grid-area: pnl; font-size: 11.5px; }
+    .alloc-row-head { font-size: 12.5px; }
+  }
+
   .guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .guide-card {
     border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
@@ -2552,25 +2587,47 @@
       renderMain();
     });
 
-    var tickerValues = {};
+    // Value and cost basis per ticker, so each donut slice can also report its
+    // own P/L. VR lots only have a knowable cost when 실제평단 was entered —
+    // those contribute `costKnown` partially, and the legend says so.
+    var tickerValues = {}, tickerCost = {}, tickerCostQty = {}, tickerQty = {};
+    function addTicker(t, value, cost, qty, costQty){
+      tickerValues[t] = (tickerValues[t]||0) + value;
+      tickerCost[t] = (tickerCost[t]||0) + cost;
+      tickerQty[t] = (tickerQty[t]||0) + qty;
+      tickerCostQty[t] = (tickerCostQty[t]||0) + costQty;
+    }
     vrHoldings.forEach(function(h){
       var live = getLivePrice(h.ticker);
       var price = live != null ? live : (h.qty ? h.value/h.qty : 0);
-      tickerValues[h.ticker] = (tickerValues[h.ticker]||0) + h.qty*price;
+      addTicker(h.ticker, h.qty*price, h.investedReal||0, h.qty, h.qtyWithReal||0);
     });
     manual.forEach(function(h){
       if (!h.ticker || !h.qty) return;
       var live = getLivePrice(h.ticker);
       var price = live != null ? live : (h.currentPrice||0);
-      tickerValues[h.ticker] = (tickerValues[h.ticker]||0) + h.qty*price;
+      addTicker(h.ticker, h.qty*price, (h.qty||0)*(h.avgCost||0), h.qty, h.qty);
     });
     muHoldings.forEach(function(h){
       var live = getLivePrice(h.ticker);
       var price = live != null ? live : (h.qty ? h.cost/h.qty : 0);
-      tickerValues[h.ticker] = (tickerValues[h.ticker]||0) + h.qty*price;
+      addTicker(h.ticker, h.qty*price, h.cost, h.qty, h.qty);
     });
+    function sliceFor(t){
+      var qty = tickerQty[t]||0, costQty = tickerCostQty[t]||0, cost = tickerCost[t]||0;
+      var s = { label: t, value: tickerValues[t] };
+      if (costQty > 0 && cost > 0){
+        // Only the shares whose cost we know can be marked to market fairly.
+        var valPerShare = qty > 0 ? tickerValues[t]/qty : 0;
+        var profit = costQty*valPerShare - cost;
+        s.profit = profit;
+        s.profitPct = cost > 0 ? (profit/cost*100) : null;
+        s.partial = costQty < qty;
+      }
+      return s;
+    }
     var allocSlices = Object.keys(tickerValues)
-      .map(function(t){ return { label: t, value: tickerValues[t] }; })
+      .map(sliceFor)
       .filter(function(s){ return s.value > 0; })
       .sort(function(a,b){ return b.value - a.value; });
     var MAX_TICKER_SLICES = 7;
@@ -2922,7 +2979,10 @@
       if (s.isCash) color = "var(--accent)";
       else if (s.label === "기타") color = "var(--muted)";
       else { color = ALLOC_CATEGORICAL[catIdx % ALLOC_CATEGORICAL.length]; catIdx++; }
-      return { label: s.label, value: s.value, pct: s.value/total*100, color: color };
+      return {
+        label: s.label, value: s.value, pct: s.value/total*100, color: color,
+        isCash: !!s.isCash, profit: s.profit, profitPct: s.profitPct, partial: s.partial
+      };
     });
 
     var cumLen = 0;
@@ -2944,13 +3004,44 @@
         '<text x="' + cx + '" y="' + (cy+20) + '" text-anchor="middle" font-size="12" fill="var(--muted)">' + escapeHtml(topLabel) + '</text>' +
       '</svg>';
 
-    var legend = '<div style="display:flex;flex-direction:column;gap:8px;justify-content:center;">' +
+    // 주식 평가금 = everything that isn't cash. Shown as the legend's header
+    // row so the stock/cash split is readable without adding up the slices.
+    var stockValue = colored.reduce(function(a,s){ return a + (s.isCash ? 0 : s.value); }, 0);
+    var stockPct = total > 0 ? (stockValue/total*100) : 0;
+    var stockProfit = 0, anyProfit = false, anyPartial = false;
+    colored.forEach(function(s){
+      if (s.profit != null){ stockProfit += s.profit; anyProfit = true; }
+      if (s.partial) anyPartial = true;
+    });
+    function pcolor(p){ return p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : "var(--ink-soft)"); }
+    function profitCell(s){
+      if (s.isCash) return '<span class="alloc-pnl footnote">–</span>';
+      if (s.profit == null) return '<span class="alloc-pnl footnote">평단 미입력</span>';
+      return '<span class="alloc-pnl" style="color:' + pcolor(s.profit) + '">' +
+        fmtCurrency(s.profit) + (s.profitPct != null ? (' (' + fmtPct(s.profitPct,1) + ')') : '') +
+        (s.partial ? '<span class="footnote">*</span>' : '') + '</span>';
+    }
+
+    var legend = '<div class="alloc-legend">' +
+      '<div class="alloc-row alloc-row-head">' +
+        '<span class="alloc-name">주식 평가금</span>' +
+        '<span class="alloc-val num">' + fmtCurrency(stockValue) + '</span>' +
+        '<span class="alloc-pct num">' + stockPct.toFixed(1) + '%</span>' +
+        (anyProfit
+          ? ('<span class="alloc-pnl" style="color:' + pcolor(stockProfit) + '">' + fmtCurrency(stockProfit) + '</span>')
+          : '<span class="alloc-pnl footnote">–</span>') +
+      '</div>' +
       colored.map(function(s){
-        return '<div class="legend" style="margin:0;"><span class="item"><span class="swatch" style="background:' + s.color + ';width:10px;height:10px;border-radius:99px;"></span>' +
-          escapeHtml(s.label) + ' &nbsp;<b class="num">' + fmtCurrency(s.value) + '</b> &nbsp;(' + s.pct.toFixed(1) + '%)</span></div>';
+        return '<div class="alloc-row">' +
+          '<span class="alloc-name"><span class="swatch" style="background:' + s.color + ';"></span>' + escapeHtml(s.label) + '</span>' +
+          '<span class="alloc-val num">' + fmtCurrency(s.value) + '</span>' +
+          '<span class="alloc-pct num">' + s.pct.toFixed(1) + '%</span>' +
+          profitCell(s) +
+        '</div>';
       }).join("") +
+      (anyPartial ? '<div class="footnote" style="margin-top:4px;">* 같은 티커 중 실제평단을 입력 안 한 물량이 있어 입력된 수량만 계산했어요.</div>' : '') +
     '</div>';
-    return '<div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">' + svg + legend + '</div>';
+    return '<div class="alloc-wrap">' + svg + legend + '</div>';
   }
 
   function renderVrHoldingsTable(vrHoldings){
