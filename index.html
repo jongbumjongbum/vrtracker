@@ -2066,13 +2066,6 @@
     return html;
   }
 
-  function muTActionOptions(mode){
-    if (mode === "reverse"){
-      return '<option value="buy">쿼터매수 체결</option><option value="sell">매도 체결</option><option value="hold">변동없음</option>';
-    }
-    return '<option value="hold">변동없음 (홀드)</option><option value="half">매수 절반 체결 (+0.5)</option><option value="full">매수 1회 완료 (+1)</option><option value="sell">쿼터매도 발생 (T×0.75)</option>';
-  }
-
   function renderMuEntryFormHtml(inst, last){
     return '<h3>오늘 기록 입력</h3>' +
       '<div class="card-desc">오늘 종가와 실제 체결내역을 입력하고, 오늘 T가 어떻게 진행됐는지 골라주세요. 매매가 없었으면 체결내역은 비워두세요.</div>' +
@@ -2085,9 +2078,13 @@
         '<div id="muFillsListHost"></div>' +
         '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="muAddFillBtn" type="button">+ 체결 추가</button></div>' +
       '</div>' +
-      '<div class="field" style="margin-top:14px;max-width:360px;">' +
-        '<label>오늘 T 진행</label>' +
-        '<select id="mu_e_taction">' + muTActionOptions(last.mode) + '</select>' +
+      '<div style="margin-top:14px;">' +
+        '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">오늘 T 진행 <span class="hint">체결내역에서 자동으로 계산돼요</span></label>' +
+        '<div class="metric-box" id="muTAuto"></div>' +
+        '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;">' +
+          '<input type="checkbox" id="mu_e_toverride_on" /> T를 직접 지정할게요 <span class="hint">(자동 계산이 실제와 다를 때만)</span>' +
+        '</label>' +
+        '<input id="mu_e_toverride" type="number" step="0.01" min="0" class="cell-input" style="width:160px;margin-top:6px;display:none;" />' +
       '</div>' +
       (last.mode === "general"
         ? '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;"><input type="checkbox" id="mu_e_exhausted" /> 오늘부로 매수 1개도 불가능해졌어요 (소진 → 리버스모드 전환)</label>'
@@ -2133,12 +2130,35 @@
       updatePreview();
     });
 
-    var closeEl = document.getElementById("mu_e_close"), dateEl = document.getElementById("mu_e_date"), tactionEl = document.getElementById("mu_e_taction");
+    var closeEl = document.getElementById("mu_e_close"), dateEl = document.getElementById("mu_e_date");
     var exhaustedEl = document.getElementById("mu_e_exhausted");
+    var tOverrideOn = document.getElementById("mu_e_toverride_on");
+    var tOverrideEl = document.getElementById("mu_e_toverride");
     function buildInput(){
-      return { date: dateEl.value, close: parseFloat(closeEl.value), fills: validFills(), tAction: tactionEl.value, exhausted: exhaustedEl ? exhaustedEl.checked : false };
+      var ov = tOverrideOn.checked ? parseFloat(tOverrideEl.value) : NaN;
+      return {
+        date: dateEl.value, close: parseFloat(closeEl.value), fills: validFills(),
+        tOverride: isNaN(ov) ? null : ov,
+        exhausted: exhaustedEl ? exhaustedEl.checked : false
+      };
     }
+    function refreshTAuto(){
+      var d = muDeriveT(inst, last, validFills());
+      var box = document.getElementById("muTAuto");
+      box.innerHTML =
+        '<div class="m-label">자동 계산된 T</div>' +
+        '<div class="m-value num">' + (Math.round(last.T*100)/100) + ' → ' + (Math.round(d.T*100)/100) + '</div>' +
+        '<div class="m-note">' + d.why.map(escapeHtml).join('<br/>') + '</div>';
+      if (!tOverrideOn.checked) tOverrideEl.value = Math.round(d.T*100)/100;
+    }
+    tOverrideOn.addEventListener("change", function(){
+      tOverrideEl.style.display = this.checked ? "" : "none";
+      refreshTAuto();
+      updatePreview();
+    });
+    tOverrideEl.addEventListener("input", updatePreview);
     function updatePreview(){
+      refreshTAuto();
       var input = buildInput();
       var box = document.getElementById("muPreview");
       if (isNaN(input.close) || input.close<=0 || !input.date){ box.style.display = "none"; return; }
@@ -2151,8 +2171,9 @@
         '<span>평단 <b>' + (res.avgCost>0?fmtMoney(res.avgCost):"–") + '</b></span>' +
         '<span>잔금 <b>' + fmtMoney0(res.cash) + '</b></span>';
     }
-    [closeEl, dateEl, tactionEl].forEach(function(el){ el.addEventListener("input", updatePreview); el.addEventListener("change", updatePreview); });
+    [closeEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); el.addEventListener("change", updatePreview); });
     if (exhaustedEl) exhaustedEl.addEventListener("change", updatePreview);
+    refreshTAuto();
 
     activeEntryApi = {
       focusClose: function(){
@@ -2920,8 +2941,49 @@
   // Walks this day's fills against the running qty/cost the same way VR's
   // computeEffectiveCostBasis does, so avgCost and realizedPL stay consistent
   // even when a day mixes a buy and a sell.
+  // T is fully determined by what actually filled, so it shouldn't be a manual
+  // choice. Every published sell rule turns out to be the same thing —
+  // T × (남은 수량 ÷ 직전 수량):
+  //   일반 쿼터매도(1/4 매도) → ×0.75      일반 지정가매도(3/4 매도) → ×0.25
+  //   리버스 20분할(1/10 매도) → ×0.9      리버스 40분할(1/20 매도) → ×0.95
+  // And every buy rule is the same fraction-of-budget idea:
+  //   일반: 그날 1회매수금 중 채워진 비율만큼 더함 (전액 +1, 절반 +0.5)
+  //   리버스: 잔금 중 쓴 비율 f에 대해 T + (분할수 − T) × f (쿼터매수 f=0.25)
+  // Sells apply before buys, matching the doc's combined "(×0.25 + 1)" case.
+  function muDeriveT(inst, prev, fills){
+    var a = inst.splitCount;
+    var sellQty = 0, buyCost = 0;
+    (fills || []).forEach(function(f){
+      if (f.type === "sell") sellQty += f.qty;
+      else buyCost += f.qty * f.price;
+    });
+    var T = prev.T, why = [];
+    if (sellQty > 0 && prev.qty > 0){
+      var soldRatio = Math.min(1, sellQty / prev.qty);
+      var keepRatio = 1 - soldRatio;
+      T = T * keepRatio;
+      why.push("매도 " + sellQty + "주 (보유 " + prev.qty + "주의 " + (soldRatio*100).toFixed(1) + "%) → T×" + keepRatio.toFixed(4).replace(/0+$/,"").replace(/\.$/,""));
+    }
+    if (buyCost > 0){
+      if (prev.mode === "reverse"){
+        var f = prev.cash > 0 ? Math.min(1, buyCost / prev.cash) : 0;
+        var add = (a - T) * f;
+        T = T + add;
+        why.push("쿼터매수 " + fmtMoney0(buyCost) + " (잔금의 " + (f*100).toFixed(1) + "%) → T +" + add.toFixed(2));
+      } else {
+        var daily = muDailyBuyAmount(prev.cash, a, prev.T);
+        var ratio = daily > 0 ? (buyCost / daily) : 0;
+        T = T + ratio;
+        why.push("매수 " + fmtMoney0(buyCost) + " / 1회매수금 " + fmtMoney0(daily) + " → T +" + ratio.toFixed(2));
+      }
+    }
+    if (!why.length) why.push("체결 없음 → T 그대로");
+    T = Math.max(0, Math.min(a, T));
+    return { T: T, why: why };
+  }
+
   function computeMuDay(inst, prev, input){
-    // input: {date, close, fills:[{type,qty,price}], tAction, exhausted}
+    // input: {date, close, fills:[{type,qty,price}], tOverride, exhausted}
     var qty = prev.qty, cost = prev.qty * prev.avgCost, realizedGain = 0;
     (input.fills || []).forEach(function(f){
       if (f.type === "buy"){
@@ -2940,16 +3002,14 @@
     var cash = prev.cash - buyCost + sellProceeds;
 
     var a = inst.splitCount;
-    var mode = prev.mode, half = prev.half, T = prev.T, reverseFirstDay = false;
+    var mode = prev.mode, half = prev.half, reverseFirstDay = false;
+    var T = (input.tOverride != null && !isNaN(input.tOverride))
+      ? Math.max(0, Math.min(a, input.tOverride))
+      : muDeriveT(inst, prev, input.fills).T;
     if (mode === "general"){
-      if (input.tAction === "full") T = prev.T + 1;
-      else if (input.tAction === "half") T = prev.T + 0.5;
-      else if (input.tAction === "sell") T = prev.T * 0.75;
       if (input.exhausted){ mode = "reverse"; reverseFirstDay = true; }
       half = muHalf(T, a);
     } else {
-      if (input.tAction === "buy") T = prev.T + (a - prev.T) * 0.25;
-      else if (input.tAction === "sell") T = prev.T * (1 - muReverseSellFraction(a));
       var base = MU_BASE_PCT[inst.ticker] || 15;
       var lossPct = avgCost > 0 ? ((input.close - avgCost) / avgCost * 100) : 0;
       if (lossPct > -base){ mode = "general"; half = muHalf(T, a); }
