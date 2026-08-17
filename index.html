@@ -548,6 +548,24 @@
         <label>분할수 <span class="hint">20/30/40분할 추천 — 적을수록 공격적</span></label>
         <input id="mu_split" type="number" step="1" min="2" value="40" />
       </div>
+      <div class="field" style="grid-column:1/3;">
+        <div class="footnote" style="border-top:1px solid var(--line);padding-top:10px;margin-top:2px;">
+          <b>중간진입인 경우만</b> 아래 3개를 채워주세요. 처음부터 시작하면 비워두거나 0으로 두면 돼요.
+        </div>
+      </div>
+      <div class="field">
+        <label>현재 보유수량 <span class="hint">이미 들고 있는 주식 수</span></label>
+        <input id="mu_qty" type="number" step="1" min="0" placeholder="0" />
+      </div>
+      <div class="field">
+        <label>현재 평단 ($) <span class="hint">증권사에 표시된 평균단가</span></label>
+        <input id="mu_avg" type="number" step="0.01" min="0" placeholder="0" />
+      </div>
+      <div class="field" style="grid-column:1/3;">
+        <label>진행회차 T <span class="hint">수량×평단으로 자동 계산됨 — 실제 진행회차를 알면 직접 고쳐도 돼요</span></label>
+        <input id="mu_T" type="number" step="0.01" min="0" placeholder="0" />
+        <div class="footnote" id="mu_seedNote" style="margin-top:6px;"></div>
+      </div>
     </div>
     <div class="form-actions">
       <button class="btn btn-ghost" id="mu_cancel" type="button">취소</button>
@@ -1923,7 +1941,8 @@
     head.innerHTML =
       '<div class="detail-head">' +
         '<div><h2>' + escapeHtml(inst.name) + '</h2>' +
-        '<div class="sub">' + escapeHtml(inst.ticker) + ' · ' + inst.splitCount + '분할 · 원금 ' + fmtMoney0(inst.principal) + ' · 시작 ' + fmtDate(inst.startDate) + '</div>' +
+        '<div class="sub">' + escapeHtml(inst.ticker) + ' · ' + inst.splitCount + '분할 · 원금 ' + fmtMoney0(inst.principal) + ' · 시작 ' + fmtDate(inst.startDate) +
+          ((inst.initQty > 0) ? (' · 중간진입 ' + inst.initQty + '주 @ ' + fmtMoney(inst.initAvgCost) + ' (T ' + (inst.initT||0) + ')') : '') + '</div>' +
         historyStepperHtml(inst.days, histIdx, "일차") + '</div>' +
         '<div class="head-actions">' +
           '<button class="btn btn-sm btn-ghost btn-danger" id="deleteMuBtn" type="button">삭제</button>' +
@@ -2868,8 +2887,31 @@
     return 2/splitCount;
   }
 
+  // Seeds the starting state. A fresh 무매 leaves initQty/initAvgCost at 0, so
+  // cash is the whole principal and T is 0. A mid-entry (이미 들고 있는 물량으로
+  // 시작) instead starts with that position already deployed: the shares come
+  // in at their real 평단, so the seed cash is the principal minus what's
+  // already in the market, and T reflects how many rounds' worth that is.
   function muInstanceInit(inst){
-    return { T:0, qty:0, avgCost:0, cash: inst.principal, mode:"general", half:"front", realizedPL:0, close:null, reverseFirstDay:false };
+    var qty = inst.initQty || 0;
+    var avg = inst.initAvgCost || 0;
+    var used = qty * avg;
+    var T = inst.initT || 0;
+    return {
+      T: T, qty: qty, avgCost: avg,
+      cash: round2((inst.principal || 0) - used),
+      mode: "general", half: muHalf(T, inst.splitCount),
+      realizedPL: 0, close: null, reverseFirstDay: false
+    };
+  }
+  // How many rounds' worth of the seed a mid-entry position represents:
+  // (already deployed) ÷ (one round's budget). Used to prefill T.
+  function muDerivedT(principal, splitCount, qty, avgCost){
+    if (!(principal > 0) || !(splitCount > 0)) return 0;
+    var perRound = principal / splitCount;
+    if (!(perRound > 0)) return 0;
+    var t = (qty * avgCost) / perRound;
+    return Math.max(0, Math.min(splitCount, Math.round(t*100)/100));
   }
   function muLastState(inst){
     return inst.days.length ? inst.days[inst.days.length-1] : muInstanceInit(inst);
@@ -3502,28 +3544,77 @@
   });
 
   var newMuModal = document.getElementById("newMuModal");
+  function muSeedFormValues(){
+    return {
+      principal: parseFloat(document.getElementById("mu_principal").value) || 0,
+      splitCount: parseInt(document.getElementById("mu_split").value, 10) || 40,
+      qty: parseFloat(document.getElementById("mu_qty").value) || 0,
+      avg: parseFloat(document.getElementById("mu_avg").value) || 0
+    };
+  }
+  // Keeps T and the summary line in step with the mid-entry inputs. T is only
+  // auto-filled while the user hasn't typed their own value (muTTouched).
+  var muTTouched = false;
+  function refreshMuSeedPreview(){
+    var v = muSeedFormValues();
+    var tEl = document.getElementById("mu_T");
+    var derived = muDerivedT(v.principal, v.splitCount, v.qty, v.avg);
+    if (!muTTouched) tEl.value = (v.qty > 0 && v.avg > 0) ? derived : "";
+    var note = document.getElementById("mu_seedNote");
+    if (v.qty > 0 && v.avg > 0 && v.principal > 0){
+      var used = v.qty * v.avg;
+      var cash = v.principal - used;
+      note.innerHTML = '이미 투입된 금액 <b>' + fmtMoney0(used) + '</b> · 남는 잔금 <b>' + fmtMoney0(cash) + '</b>' +
+        ' · 1회분 <b>' + fmtMoney0(v.principal/v.splitCount) + '</b> 기준 자동계산 T <b>' + derived + '</b>' +
+        (cash < 0 ? ' <span style="color:var(--sell)">— 수량×평단이 원금보다 커요. 원금을 다시 확인해주세요.</span>' : '');
+    } else {
+      note.textContent = "";
+    }
+  }
   function openNewMuModal(){
     document.getElementById("mu_name").value = "";
     document.getElementById("mu_ticker").value = "TQQQ";
     document.getElementById("mu_date").value = todayStr();
     document.getElementById("mu_principal").value = "";
     document.getElementById("mu_split").value = 40;
+    document.getElementById("mu_qty").value = "";
+    document.getElementById("mu_avg").value = "";
+    document.getElementById("mu_T").value = "";
+    muTTouched = false;
+    refreshMuSeedPreview();
     newMuModal.classList.remove("hidden");
   }
+  ["mu_principal","mu_split","mu_qty","mu_avg"].forEach(function(id){
+    document.getElementById(id).addEventListener("input", refreshMuSeedPreview);
+  });
+  document.getElementById("mu_T").addEventListener("input", function(){ muTTouched = true; });
   document.getElementById("mu_cancel").addEventListener("click", function(){ newMuModal.classList.add("hidden"); });
   document.getElementById("mu_create").addEventListener("click", function(){
     var name = document.getElementById("mu_name").value.trim();
     var ticker = document.getElementById("mu_ticker").value;
     var date = document.getElementById("mu_date").value;
-    var principal = parseFloat(document.getElementById("mu_principal").value);
-    var splitCount = parseInt(document.getElementById("mu_split").value, 10) || 40;
-    if (!name || !date || isNaN(principal) || principal<=0){
+    var v = muSeedFormValues();
+    var principal = v.principal, splitCount = v.splitCount;
+    if (!name || !date || !(principal > 0)){
       alert("이름, 시작일, 원금은 필수예요.");
       return;
     }
+    var initQty = v.qty, initAvg = v.avg;
+    if ((initQty > 0) !== (initAvg > 0)){
+      alert("중간진입이면 보유수량과 평단을 함께 입력해주세요. 처음부터 시작이면 둘 다 비워두세요.");
+      return;
+    }
+    var used = initQty * initAvg;
+    if (used > principal){
+      alert("수량×평단(" + fmtMoney0(used) + ")이 원금(" + fmtMoney0(principal) + ")보다 커요. 원금을 확인해주세요.");
+      return;
+    }
+    var tRaw = parseFloat(document.getElementById("mu_T").value);
+    var initT = isNaN(tRaw) ? muDerivedT(principal, splitCount, initQty, initAvg) : Math.max(0, Math.min(splitCount, tRaw));
     var inst = {
       id: uid(), name: name, ticker: ticker, startDate: date,
       principal: principal, splitCount: splitCount,
+      initQty: initQty, initAvgCost: initAvg, initT: initT,
       days: [], realizedPL: 0, mode: "general"
     };
     state.muInstances.push(inst);
