@@ -1575,6 +1575,13 @@
       saveState();
       render();
     });
+    var sellMoreBtn = document.getElementById("sellMoreBtn");
+    if (sellMoreBtn){
+      sellMoreBtn.addEventListener("click", function(){
+        sellLadderExpand[inst.id] = (sellLadderExpand[inst.id] || 0) + SELL_LADDER_PAGE;
+        render();
+      });
+    }
 
     // transition helper
     var tcard = document.createElement("div");
@@ -1699,6 +1706,7 @@
       inst.cycles.push(res);
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
       currentSegment(inst, date).gDeferred = false;
+      delete sellLadderExpand[inst.id];
       saveState();
       render();
     });
@@ -2553,6 +2561,14 @@
 
   var DEFAULT_TRANCHE_SIZE = 1; // base unit is always "1개씩" — the account owner personally scales it (e.g. "2배", "5배") to fit their own capital size, so this is a per-VR setting, not a derivable formula
 
+  // Sell has no pool-style limit, so a sharp enough rally can blow through the
+  // ladder rungs the "E returns to V" estimate produces. This tracks how many
+  // extra rungs past that estimate the user has asked to reveal (per VR
+  // instance) via the "더보기" button — a transient UI aid, not persisted,
+  // reset whenever a new cycle changes the ladder's base numbers.
+  var sellLadderExpand = {};
+  var SELL_LADDER_PAGE = 10;
+
   // Reproduces the real 중계표 mechanic: each rung's price is the band dollar
   // amount divided by the share count held BEFORE that rung (buyBand/q or
   // sellBand/q) — not linear interpolation across a price range. Since q
@@ -2736,7 +2752,7 @@
     var V = last.Vnext;
     var buyLimitAmt = round2(last.Pool * (limit.buyPct/100));
     var trancheSize = inst.trancheSize || DEFAULT_TRANCHE_SIZE;
-    var buyTranches = [], sellTranches = [], note = "";
+    var buyTranches = [], sellTranches = [], note = "", sellRemaining = 0;
 
     if (qty > 0){
       var buyPriceInit = buyBand / qty;
@@ -2750,11 +2766,27 @@
       var boughtQty = buyTranches.length * trancheSize;
       if (boughtQty < maxBuyQty) note = '매수 한도(' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(buyLimitAmt) + ')에 걸려서 필요한 수량보다 적게 매수돼요.';
 
-      // Sell has no pool-based limit — only stop once E would be restored to V.
+      // Sell has no pool-based limit — the estimate below is where E would
+      // return to V, but a sharp enough rally can blow straight through that
+      // (real fills reaching further than the model predicted). The only
+      // real ceiling is the shares actually held, so build the ladder all
+      // the way there and only show the estimate's worth by default — the
+      // rest is revealed a page at a time via the "더보기" button below.
       var maxSellQty = Math.floor(Math.min(Math.max(0, (sellBand - V) / sellPriceInit), qty));
-      sellTranches = buildBandLadder(qty, sellBand, -1, trancheSize, function(cumQty){
-        return cumQty <= maxSellQty;
+      var sellTranchesAll = buildBandLadder(qty, sellBand, -1, trancheSize, function(cumQty){
+        return cumQty <= qty;
       });
+      var sellCum = 0, defaultSellCount = 0;
+      for (var si=0; si<sellTranchesAll.length; si++){
+        sellCum += sellTranchesAll[si].qty;
+        defaultSellCount = si+1;
+        if (sellCum >= maxSellQty) break;
+      }
+      if (sellTranchesAll.length === 0) defaultSellCount = 0;
+      var sellExtra = sellLadderExpand[inst.id] || 0;
+      var sellVisibleCount = Math.min(sellTranchesAll.length, defaultSellCount + sellExtra);
+      sellTranches = sellTranchesAll.slice(0, sellVisibleCount);
+      sellRemaining = sellTranchesAll.length - sellVisibleCount;
     } else {
       var refPrice = inst.initPrice || (inst.cycles.length ? inst.cycles[inst.cycles.length-1].price : 0);
       if (refPrice > 0){
@@ -2780,7 +2812,12 @@
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>구분</th><th class="num">가격</th><th class="num">수량</th><th class="num">금액</th>' +
       '</tr></thead><tbody>' + trancheRows("매수", buyTranches) + trancheRows("매도", sellTranches) + '</tbody></table></div>' +
-      (note ? ('<div class="footnote" style="margin-top:8px;">' + note + '</div>') : '');
+      (note ? ('<div class="footnote" style="margin-top:8px;">' + note + '</div>') : '') +
+      (sellRemaining > 0
+        ? ('<div class="form-actions" style="justify-content:flex-start;margin-top:8px;">' +
+            '<button class="btn btn-sm" id="sellMoreBtn" type="button">매도표 더 보기 (남은 ' + sellRemaining + '단계, 보유 ' + qty + '주 한도까지)</button>' +
+          '</div>')
+        : '');
   }
 
   function renderHistoryTable(inst){
