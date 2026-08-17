@@ -1534,7 +1534,11 @@
     }
     state.muInstances.forEach(function(inst){
       var last = muLastState(inst);
-      var tot = round2((last.value||0) + (last.cash||0));
+      // Same pricing fallback as the detail view: a seeded instance has no
+      // recorded close yet, so fall back to live quote, then 평단.
+      var lp = getLivePrice(inst.ticker);
+      var px = (lp != null) ? lp : (last.close || last.avgCost || 0);
+      var tot = round2((last.qty||0)*px + (last.cash||0));
       var card = document.createElement("button");
       card.type = "button";
       card.className = "instance-card" + (inst.id === state.muSelectedId ? " active" : "");
@@ -1921,7 +1925,7 @@
       mainArea.innerHTML =
         '<div class="empty-state">' +
         '<h2>운용 중인 무매를 선택하거나 새로 만들어보세요</h2>' +
-        '<p>TQQQ·SOXL 무한매수법을 관리해요. 매일 종가와 체결내역을 입력하면 다음 별지점·매수금·모드가 자동으로 계산돼요.</p>' +
+        '<p>TQQQ·SOXL 무한매수법을 관리해요. 매일 종가와 체결내역을 입력하면 다음 ★지점·매수금·모드가 자동으로 계산돼요.</p>' +
         '<button class="btn btn-primary" id="emptyNewMuBtn" type="button">+ 새 무매 만들기</button>' +
         '</div>';
       document.getElementById("emptyNewMuBtn").addEventListener("click", openNewMuModal);
@@ -1957,13 +1961,26 @@
     }
 
     var progress = Math.min(100, (last.T/inst.splitCount)*100);
-    var totalAsset = round2((last.value||0) + (last.cash||0));
+    // A freshly seeded 무매 has no recorded close yet, so last.value would be 0
+    // and 평가금/총자산 would read as if the position were worthless. Price the
+    // holding at the live quote when we're on the current view; a history view
+    // must stay pinned to that day's own close.
+    var liveNow = getLivePrice(inst.ticker);
+    var priceNow = viewingPast
+      ? (last.close || last.avgCost || 0)
+      : (liveNow != null ? liveNow : (last.close || last.avgCost || 0));
+    var priceSrc = viewingPast ? "그날 종가" : (liveNow != null ? "실시간" : (last.close ? "마지막 기록 종가" : "평단"));
+    var evalNow = round2((last.qty||0) * priceNow);
+    var investedNow = round2((last.qty||0) * (last.avgCost||0));
+    var unrealized = round2(evalNow - investedNow);
+    var unrealizedPct = investedNow > 0 ? (unrealized/investedNow*100) : null;
+    var totalAsset = round2(evalNow + (last.cash||0));
     // 잔금 already nets out sells, so 원금−잔금 is what's currently deployed
     // into stock — the reading that matters day to day ("시드를 얼마나 썼나").
     var usedSeed = round2(inst.principal - (last.cash||0));
     var usedSeedPct = inst.principal > 0 ? (usedSeed/inst.principal*100) : null;
     var modeLabel = last.mode === "reverse" ? ("리버스모드" + (last.reverseFirstDay ? " (전환 첫날)" : "")) : ("일반모드 · " + (last.half === "back" ? "후반전" : "전반전"));
-    var pnlColor = (last.realizedPL||0) > 0 ? "var(--buy)" : ((last.realizedPL||0) < 0 ? "var(--sell)" : undefined);
+    function muPnlColor(p){ return p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : undefined); }
 
     var stats = document.createElement("div");
     stats.className = "stat-strip";
@@ -1975,9 +1992,13 @@
       stat("잔금", fmtMoney0(last.cash||0)) +
       stat("평단", last.avgCost>0 ? fmtMoney(last.avgCost) : "–") +
       stat("보유수량", last.qty || 0) +
-      stat("평가금", fmtMoney0(last.value||0)) +
+      stat("현재가 (" + priceSrc + ")", priceNow>0 ? fmtMoney(priceNow) : "–") +
+      stat("평가금", fmtMoney0(evalNow)) +
+      stat("미실현 수익금(수익률)", (last.qty>0 && investedNow>0)
+        ? (fmtMoney0(unrealized) + " (" + fmtPct(unrealizedPct,2) + ")")
+        : "–", last.qty<=0, muPnlColor(unrealized)) +
       stat("총자산 (평가금+잔금)", fmtMoney0(totalAsset)) +
-      stat("실현손익", fmtMoney0(last.realizedPL||0), false, pnlColor);
+      stat("실현손익", fmtMoney0(last.realizedPL||0), false, muPnlColor(last.realizedPL||0));
     mainArea.appendChild(stats);
 
     var plan = muOrderPlan(inst, last);
@@ -2039,19 +2060,19 @@
         return '<div class="card-desc">리버스모드 전환 첫날이에요. 매수 없이, 보유수량의 일부만 종가매도(MOC)로 파세요.</div>' +
           '<div class="preview-band"><span>MOC 매도 수량 <b>' + plan.sellQty + '주</b></span></div>';
       }
-      return '<div class="card-desc">리버스모드예요. 잔금의 1/4로 별지점 아래에서 매수(쿼터매수)를 시도하고, 보유수량 일부를 별지점에 매도로 겁니다.</div>' +
+      return '<div class="card-desc">리버스모드예요. 잔금의 1/4로 ★지점 아래에서 매수(쿼터매수)를 시도하고, 보유수량 일부를 ★지점에 매도로 겁니다.</div>' +
         '<div class="preview-band">' +
-          '<span>별지점 (최근 5일 종가평균) <b>' + (plan.starPrice!=null?fmtMoney(plan.starPrice):"–") + '</b></span>' +
+          '<span>★지점 (최근 5일 종가평균) <b>' + (plan.starPrice!=null?fmtMoney(plan.starPrice):"–") + '</b></span>' +
           '<span>매수점 <b>' + (plan.buyTrigger!=null?fmtMoney(plan.buyTrigger):"–") + '</b></span>' +
           '<span>매도 수량 <b>' + plan.sellQty + '주</b> @ ' + (plan.sellPrice!=null?fmtMoney(plan.sellPrice):"–") + '</span>' +
         '</div>' +
         '<h4 style="margin-top:10px;font-size:13px;">쿼터매수 주문표 (LOC)</h4>' + muLadderRowsHtml(plan.buyLadder, plan.avgCost);
     }
-    var html = '<div class="card-desc">' + (plan.half==="back" ? "후반전: 오늘 매수시도금 전체를 별지점 하나에" : "전반전: 오늘 매수시도금을 별지점/평단에 절반씩") +
-      ' LOC로 겁니다. 매도는 보유수량 1/4를 별지점에 LOC로, 나머지는 평단 대비 고정가에 지정가로 겁니다.</div>' +
+    var html = '<div class="card-desc">' + (plan.half==="back" ? "후반전: 오늘 매수시도금 전체를 ★지점 하나에" : "전반전: 오늘 매수시도금을 ★지점/평단에 절반씩") +
+      ' LOC로 겁니다. 매도는 보유수량 1/4를 ★지점에 LOC로, 나머지는 평단 대비 고정가에 지정가로 겁니다.</div>' +
       '<div class="preview-band">' +
-        '<span>별% <b>' + plan.starPct.toFixed(2) + '%</b></span>' +
-        '<span>별지점 <b>' + (plan.starPrice!=null?fmtMoney(plan.starPrice):"–") + '</b></span>' +
+        '<span>★% <b>' + plan.starPct.toFixed(2) + '%</b></span>' +
+        '<span>★지점 <b>' + (plan.starPrice!=null?fmtMoney(plan.starPrice):"–") + '</b></span>' +
         '<span>매수점 <b>' + (plan.buyTrigger!=null?fmtMoney(plan.buyTrigger):"–") + '</b></span>' +
         '<span>오늘 매수시도금 <b>' + fmtMoney0(plan.dailyAmt) + '</b></span>' +
       '</div>';
@@ -3082,11 +3103,11 @@
       plan.buyLadders = [{ label: "첫매수", rows: muBuildAnchorLadder(buyTrigger || round2((last.close||0)*1.12), dailyAmt) }];
     } else if (last.half === "front"){
       plan.buyLadders = [
-        { label: "별지점", rows: muBuildAnchorLadder(buyTrigger, round2(dailyAmt/2)) },
+        { label: "★지점", rows: muBuildAnchorLadder(buyTrigger, round2(dailyAmt/2)) },
         { label: "평단", rows: muBuildAnchorLadder(last.avgCost, round2(dailyAmt/2)) }
       ];
     } else {
-      plan.buyLadders = [{ label: "별지점", rows: muBuildAnchorLadder(buyTrigger, dailyAmt) }];
+      plan.buyLadders = [{ label: "★지점", rows: muBuildAnchorLadder(buyTrigger, dailyAmt) }];
     }
     return plan;
   }
