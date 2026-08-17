@@ -97,6 +97,24 @@
 
   .mobile-topbar { display: none; }
   .action-bar { display: none; }
+  /* 매수 / 매도 side by side, so both sides of the band are readable at once
+     instead of one being buried under the other. */
+  .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .limit-box { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); }
+  .limit-line { font-size: 13px; margin-bottom: 8px; }
+  .limit-track { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin-bottom: 6px; }
+  .limit-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+
+  .ladder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .ladder-col { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); }
+  .ladder-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .ladder-col .table-wrap { max-height: 420px; overflow-y: auto; }
+  .ladder-col table { font-size: 12.2px; }
+  .ladder-col th, .ladder-col td { padding: 5px 6px; }
+  @media (max-width: 860px) { .ladder-grid { grid-template-columns: 1fr; } .ladder-col .table-wrap { max-height: none; } }
+
   .history-stepper { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .history-stepper .hist-label { font-size: 13px; font-weight: 600; min-width: 130px; }
   .history-stepper .btn[disabled] { opacity: .4; cursor: default; }
@@ -1176,6 +1194,8 @@
     if (state.portfolio.extraCash == null) state.portfolio.extraCash = 0;
     if (!state.portfolio.cashLog) state.portfolio.cashLog = [];
     if (!state.portfolio.assetSnapshots) state.portfolio.assetSnapshots = [];
+    if (!state.pnlPreset) state.pnlPreset = "thisMonth";
+    if (!state.pnlCustom) state.pnlCustom = { from: null, to: null };
     state.portfolio.holdings.forEach(function(h){
       if (h.realizedPL == null) h.realizedPL = 0;
       if (!h.trades) h.trades = [];
@@ -1228,7 +1248,7 @@
   // sell's realized gain by both the year and the "YYYY-MM" month it happened
   // in, so 손익 tab tables/charts don't need to re-walk the same data twice.
   function realizedPLBuckets(){
-    var byYear = {}, byMonth = {};
+    var byYear = {}, byMonth = {}, events = [];
     function add(map, key, kind, amount){
       if (!map[key]) map[key] = { vr: 0, other: 0 };
       map[key][kind] += amount;
@@ -1239,6 +1259,9 @@
       var month = year + "-" + pad(d.getMonth()+1);
       add(byYear, year, kind, amount);
       add(byMonth, month, kind, amount);
+      // Kept flat as well so an arbitrary date range (직접입력) can be summed
+      // without re-walking every instance.
+      events.push({ date: dateStr, kind: kind, amount: amount });
     }
     state.instances.forEach(function(inst){
       var qty = inst.initQty || 0, cost = qty * (inst.initPrice || 0);
@@ -1278,7 +1301,7 @@
         if (t.type === "sell") addBoth(t.date, "other", t.gain || 0);
       });
     });
-    return { byYear: byYear, byMonth: byMonth };
+    return { byYear: byYear, byMonth: byMonth, events: events };
   }
 
   // Records at most one snapshot per calendar day (never overwrites an
@@ -1671,6 +1694,9 @@
         '<input id="gManualInput" type="number" step="1" class="cell-input" style="width:100%;" value="' + G + '" /></div>' +
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
       stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
+      stat("보유수량", (last.qty || 0).toLocaleString() + "주", true) +
+      stat("매입 금액 (" + ((realAvg != null && realAvg > 0) ? "실제평단" : "실효평단") + " 기준)",
+        fmtMoney0((last.qty || 0) * ((realAvg != null && realAvg > 0) ? realAvg : costBasis.avgCost))) +
       stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
       stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
       stat("실현손익 (지금까지 매도로 확정된 손익)", fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
@@ -1701,14 +1727,25 @@
     // ① 주문표 — what to actually go place with the broker right now. Kept in
     // its own card and first, because it's the thing looked at every day; the
     // recording form below is only touched once per cycle.
+    var win = currentCycleWindow(inst, last);
+    var buyLimitAmtHdr = round2(last.Pool * (limit.buyPct/100));
+    var plannedSpend = plannedBuySpend(inst, last, buyBand, limit);
+    var spendPct = buyLimitAmtHdr > 0 ? Math.min(100, plannedSpend/buyLimitAmtHdr*100) : 0;
+
     var orderCard = document.createElement("div");
     orderCard.className = "card";
     orderCard.innerHTML =
       '<h3>' + (viewingPast ? '이 사이클에 걸었던 주문표' : '① 이번 사이클 주문표 — 지금 걸어두세요') + '</h3>' +
-      '<div class="card-desc">아래 가격에 지정가 주문을 걸어두세요. 매수는 매수한도(Pool ' + limit.buyPct.toFixed(0) + '%, ' + fmtMoney0(round2(last.Pool * (limit.buyPct/100))) + ') 안에서, 매도는 평가금(E)이 V로 돌아오는 지점까지예요.' +
+      '<div class="card-desc">' +
+        '<b>사이클 기간 ' + fmtDate(win.start) + ' ~ ' + fmtDate(win.end) + '</b> · 아래 가격에 지정가 주문을 걸어두세요.' +
         (getLivePrice(inst.ticker) != null ? (' <span class="footnote" style="display:inline;">(참고: 지금 실시간가 ' + fmtMoney(getLivePrice(inst.ticker)) + ' — 표 계산에는 안 쓰여요)</span>') : '') +
       '</div>' +
-      '<div class="field" style="max-width:220px;margin-bottom:12px;"><label>분할 수량 (주, 직접입력)</label>' +
+      '<div class="limit-box">' +
+        '<div class="limit-line">이번 사이클은 Pool ' + fmtMoney0(last.Pool) + ' 중 <b>매수한도 ' + limit.buyPct.toFixed(0) + '%인 ' + fmtMoney0(buyLimitAmtHdr) + '</b>까지 쓸 수 있어요.</div>' +
+        '<div class="limit-track"><div class="limit-fill" style="width:' + spendPct.toFixed(1) + '%"></div></div>' +
+        '<div class="footnote">아래 매수표가 전부 체결되면 ' + fmtMoney0(plannedSpend) + ' (한도의 ' + spendPct.toFixed(0) + '%) 사용해요.</div>' +
+      '</div>' +
+      '<div class="field" style="max-width:220px;margin:12px 0;"><label>분할 수량 (주, 직접입력)</label>' +
         '<input id="trancheSizeInput" type="number" step="1" min="1" class="cell-input" style="width:100%;" value="' + (inst.trancheSize || DEFAULT_TRANCHE_SIZE) + '" /></div>' +
       renderOrderTable(inst, last, buyBand, sellBand, limit);
     mainArea.appendChild(orderCard);
@@ -2562,6 +2599,48 @@
 
   function pnlRowColor(p){ return p>0?"var(--buy)":(p<0?"var(--sell)":"var(--ink-soft)"); }
 
+  var PNL_PRESETS = [
+    { key:"thisMonth", label:"이번 달" },
+    { key:"lastMonth", label:"지난달" },
+    { key:"thisQuarter", label:"이번 분기" },
+    { key:"lastQuarter", label:"지난 분기" },
+    { key:"lastHalf", label:"지난 반기" },
+    { key:"thisYear", label:"올해" },
+    { key:"lastYear", label:"지난해" },
+    { key:"all", label:"전체" },
+    { key:"custom", label:"직접입력" }
+  ];
+  function ymd(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
+  // Resolves a preset to an inclusive [from, to] date range. "all" returns
+  // nulls, meaning no bound on that end.
+  function resolvePnlRange(preset, custom){
+    var now = new Date();
+    var y = now.getFullYear(), m = now.getMonth();
+    function range(a, b){ return { from: ymd(a), to: ymd(b) }; }
+    switch (preset){
+      case "thisMonth":   return range(new Date(y, m, 1), new Date(y, m+1, 0));
+      case "lastMonth":   return range(new Date(y, m-1, 1), new Date(y, m, 0));
+      case "thisQuarter": var q = Math.floor(m/3); return range(new Date(y, q*3, 1), new Date(y, q*3+3, 0));
+      case "lastQuarter": var lq = Math.floor(m/3)-1; return range(new Date(y, lq*3, 1), new Date(y, lq*3+3, 0));
+      case "lastHalf":    var h = m < 6 ? -1 : 0; return range(new Date(y, h*6, 1), new Date(y, h*6+6, 0));
+      case "thisYear":    return range(new Date(y, 0, 1), new Date(y, 11, 31));
+      case "lastYear":    return range(new Date(y-1, 0, 1), new Date(y-1, 11, 31));
+      case "custom":      return { from: (custom && custom.from) || null, to: (custom && custom.to) || null };
+      default:            return { from: null, to: null };
+    }
+  }
+  function sumRealizedInRange(events, range){
+    var vr = 0, other = 0, n = 0;
+    events.forEach(function(e){
+      var d = e.date;
+      if (range.from && d < range.from) return;
+      if (range.to && d > range.to) return;
+      if (e.kind === "vr") vr += e.amount; else other += e.amount;
+      n++;
+    });
+    return { vr: vr, other: other, total: vr + other, count: n };
+  }
+
   function renderPnL(){
     var head = document.createElement("div");
     head.innerHTML =
@@ -2569,6 +2648,55 @@
         '<div><h2>손익</h2><div class="sub">실현손익은 연도별·월별로, 총자산·누적손익(실현+미실현)은 포트폴리오 탭을 열 때마다 자동으로 남는 스냅샷 기준으로 보여줘요.</div></div>' +
       '</div>';
     mainArea.appendChild(head);
+
+    var pnlBuckets0 = realizedPLBuckets();
+    var preset = state.pnlPreset || "thisMonth";
+    var custom = state.pnlCustom || { from: null, to: null };
+    var range = resolvePnlRange(preset, custom);
+    var ranged = sumRealizedInRange(pnlBuckets0.events, range);
+    var rangeCard = document.createElement("div");
+    rangeCard.className = "card";
+    rangeCard.innerHTML = "<h3>기간별 실현손익</h3>" +
+      '<div class="card-desc">보고 싶은 기간을 고르면 그 사이에 매도로 확정된 손익만 합산해요.</div>' +
+      '<div class="preset-row">' +
+        PNL_PRESETS.map(function(p){
+          return '<button type="button" class="btn btn-sm preset-btn' + (p.key===preset?" active":"") + '" data-preset="' + p.key + '">' + p.label + '</button>';
+        }).join("") +
+      '</div>' +
+      (preset === "custom"
+        ? ('<div class="form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;max-width:420px;">' +
+            field("시작일", '<input id="pnlFrom" type="date" value="' + (custom.from||"") + '" />') +
+            field("종료일", '<input id="pnlTo" type="date" value="' + (custom.to||"") + '" />') +
+          '</div>')
+        : '') +
+      '<div class="footnote" style="margin-top:8px;">' +
+        (range.from || range.to
+          ? ('기간: ' + (range.from ? fmtDate(range.from) : "처음") + ' ~ ' + (range.to ? fmtDate(range.to) : "지금") + ' · 매도 ' + ranged.count + '건')
+          : ('전체 기간 · 매도 ' + ranged.count + '건')) +
+      '</div>' +
+      '<div class="stat-strip" style="margin-top:12px;">' +
+        stat("합계", fmtCurrency(ranged.total), false, pnlRowColor(ranged.total)) +
+        stat("VR", fmtCurrency(ranged.vr), false, pnlRowColor(ranged.vr)) +
+        stat("그외", fmtCurrency(ranged.other), false, pnlRowColor(ranged.other)) +
+      '</div>';
+    mainArea.appendChild(rangeCard);
+    Array.prototype.forEach.call(rangeCard.querySelectorAll(".preset-btn"), function(b){
+      b.addEventListener("click", function(){
+        state.pnlPreset = b.getAttribute("data-preset");
+        saveState();
+        renderMain();
+      });
+    });
+    var fromEl = document.getElementById("pnlFrom"), toEl = document.getElementById("pnlTo");
+    if (fromEl && toEl){
+      function commitCustom(){
+        state.pnlCustom = { from: fromEl.value || null, to: toEl.value || null };
+        saveState();
+        renderMain();
+      }
+      fromEl.addEventListener("change", commitCustom);
+      toEl.addEventListener("change", commitCustom);
+    }
 
     var monthly = monthlySnapshots();
     var assetCard = document.createElement("div");
@@ -2595,7 +2723,7 @@
       assetCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>';
     }
 
-    var buckets = realizedPLBuckets();
+    var buckets = pnlBuckets0;
 
     function realizedTable(map, keys, labelSuffix){
       var rows = keys.map(function(k){
@@ -2825,6 +2953,14 @@
     });
   }
 
+  // The cycle now running: it opened on the last recorded cycle's date (or the
+  // instance's start date if nothing is recorded yet) and closes one cycle
+  // length later. Shown as a range because "시작일 + 다음 시작 예정" split
+  // across two fields reads as two separate cycles.
+  function currentCycleWindow(inst, last){
+    var start = (last && last.date) ? last.date : inst.initDate;
+    return { start: start, end: addDaysStr(start, inst.cycleDays) };
+  }
   function addDaysStr(dateStr, days){
     var d = new Date(new Date(dateStr).getTime() + days*86400000);
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
@@ -3120,6 +3256,20 @@
     return plan;
   }
 
+  // Total cash the buy ladder would consume if every rung filled — drives the
+  // "한도의 몇 %를 쓰게 되는지" bar above the table.
+  function plannedBuySpend(inst, last, buyBand, limit){
+    var qty = last.qty || 0;
+    if (qty <= 0) return 0;
+    var buyLimitAmt = round2(last.Pool * (limit.buyPct/100));
+    var trancheSize = inst.trancheSize || DEFAULT_TRANCHE_SIZE;
+    var maxBuyQty = Math.floor(Math.max(0, (last.Vnext - buyBand) / (buyBand / qty)));
+    var rungs = buildBandLadder(qty, buyBand, +1, trancheSize, function(cumQty, cumSpent){
+      return cumQty <= maxBuyQty && cumSpent <= buyLimitAmt;
+    });
+    return round2(rungs.reduce(function(s, t){ return s + t.qty*t.price; }, 0));
+  }
+
   function renderOrderTable(inst, last, buyBand, sellBand, limit){
     var qty = last.qty || 0;
     var V = last.Vnext;
@@ -3175,25 +3325,46 @@
       ? inst.realAvgCost
       : computeEffectiveCostBasis(inst).avgCost;
 
-    function trancheRows(type, tranches){
-      if (!tranches.length) return '<tr><td colspan="5" class="chart-empty">해당 없음</td></tr>';
+    // Each rung is easier to act on when it answers "if this one fills, how
+    // many shares will I hold and how much cash is left?" — so the quantity
+    // column is the running total after the rung, not the tranche size, and a
+    // Pool 잔액 column tracks the cash side down the ladder.
+    function ladderSide(type, tranches, startQty, startPool, direction){
       var cls = type === "매수" ? "signal-buy" : "signal-sell";
-      return tranches.map(function(t, i){
+      var band = direction > 0 ? buyBand : sellBand;
+      var head =
+        '<div class="ladder-head">' +
+          '<span class="signal-badge ' + cls + '" style="padding:2px 9px;font-size:11.5px;"><span class="dot"></span>' + type + '</span>' +
+          '<span class="footnote">' + (direction > 0 ? "최소" : "최대") + ' 밴드 ' + fmtMoney0(band) + '</span>' +
+        '</div>';
+      if (!tranches.length){
+        return '<div class="ladder-col">' + head + '<div class="chart-empty">해당 없음</div></div>';
+      }
+      var runQty = startQty, runPool = startPool;
+      var rows = tranches.map(function(t){
+        runQty += direction * t.qty;
+        runPool += (direction > 0 ? -1 : 1) * (t.qty * t.price);
         return '<tr>' +
-          '<td data-label="구분">' + (i===0 ? '<span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + type + ' ' + (i+1) + '/' + tranches.length + '</span>' : '<span class="footnote">' + type + ' ' + (i+1) + '/' + tranches.length + '</span>') + '</td>' +
-          '<td class="num" data-label="가격" style="text-align:right;">' + fmtMoney(t.price) + '</td>' +
-          '<td class="num" data-label="평단대비" style="text-align:right;">' + vsAvgCell(t.price, refAvg) + '</td>' +
-          '<td class="num" data-label="수량" style="text-align:right;">' + t.qty.toLocaleString() + '주</td>' +
-          '<td class="num" data-label="금액" style="text-align:right;">' + fmtMoney0(t.qty*t.price) + '</td>' +
+          '<td class="num" data-label="체결 후 수량">' + runQty.toLocaleString() + '주</td>' +
+          '<td class="num" data-label="가격">' + fmtMoney(t.price) + '</td>' +
+          '<td class="num" data-label="평단대비">' + vsAvgCell(t.price, refAvg) + '</td>' +
+          '<td class="num" data-label="Pool 잔액">' + fmtMoney0(runPool) + '</td>' +
           '</tr>';
       }).join("");
+      return '<div class="ladder-col">' + head +
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
+        '<th class="num">체결 후 수량</th><th class="num">가격</th><th class="num">평단대비</th><th class="num">Pool 잔액</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }
 
-    return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
-      '<th>구분</th><th class="num">가격</th><th class="num">평단대비</th><th class="num">수량</th><th class="num">금액</th>' +
-      '</tr></thead><tbody>' + trancheRows("매수", buyTranches) + trancheRows("매도", sellTranches) + '</tbody></table></div>' +
-      (refAvg > 0 ? ('<div class="footnote" style="margin-top:6px;">평단대비는 ' + ((inst.realAvgCost != null && inst.realAvgCost > 0) ? "실제평단" : "실효평단") + ' ' + fmtMoney(refAvg) + ' 기준이에요.</div>') : '') +
-      (note ? ('<div class="footnote" style="margin-top:8px;">' + note + '</div>') : '') +
+    return '<div class="ladder-grid">' +
+        ladderSide("매수", buyTranches, qty, last.Pool, +1) +
+        ladderSide("매도", sellTranches, qty, last.Pool, -1) +
+      '</div>' +
+      '<div class="footnote" style="margin-top:8px;">수량은 <b>그 주문이 체결됐을 때 총 보유수량</b>이고, Pool 잔액은 거기까지 체결됐을 때 남는 현금이에요.' +
+        (refAvg > 0 ? (' 평단대비는 ' + ((inst.realAvgCost != null && inst.realAvgCost > 0) ? "실제평단" : "실효평단") + ' ' + fmtMoney(refAvg) + ' 기준이에요.') : '') +
+      '</div>' +
+      (note ? ('<div class="footnote" style="margin-top:6px;">' + note + '</div>') : '') +
       (sellRemaining > 0
         ? ('<div class="form-actions" style="justify-content:flex-start;margin-top:8px;">' +
             '<button class="btn btn-sm" id="sellMoreBtn" type="button">매도표 더 보기 (남은 ' + sellRemaining + '단계, 보유 ' + qty + '주 한도까지)</button>' +
