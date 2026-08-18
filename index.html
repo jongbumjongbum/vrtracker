@@ -2730,10 +2730,13 @@
         '<div class="value num" style="font-size:15px;margin-top:2px;color:' + (pfPnlColor(totalProfitAll) || "var(--ink-soft)") + '">' +
           pnlCombined(totalProfitAll, totalProfitAllPct) + '</div>' +
       '</div>' +
-      stat("예수금 합계 (아래 둘의 합, 도넛과 동일)", fmtCurrency(cashTotal)) +
+      stat("예수금 합계 (아래 셋의 합, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
-      stat("└ 그외 예수금 (직접입력+무매 잔금)", fmtCurrency(otherCashTotal)) +
-      '<div class="stat"><div class="label">그외 예수금 직접 조정 (직접입력분만)</div>' +
+      // Broken out on its own line: when this is silently folded into "그외",
+      // a 무매 seed double-counts against the manually typed broker cash and
+      // the total quietly stops matching the brokerage.
+      stat("└ 무매 잔금 합", fmtCurrency(muCashTotal)) +
+      '<div class="stat"><div class="label">└ 직접입력 예수금 <span class="hint">VR Pool·무매 잔금에 이미 잡힌 돈은 빼고, 나머지 현금만 넣어주세요</span></div>' +
         '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
         'value="' + extraCash + '" placeholder="예: 500" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
