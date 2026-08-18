@@ -1312,6 +1312,7 @@
     if (state.portfolio.extraCash == null) state.portfolio.extraCash = 0;
     if (!state.portfolio.cashLog) state.portfolio.cashLog = [];
     if (!state.portfolio.assetSnapshots) state.portfolio.assetSnapshots = [];
+    if (!state.portfolio.manualRealized) state.portfolio.manualRealized = [];
     if (!state.pnlPreset) state.pnlPreset = "thisMonth";
     if (!state.pnlCustom) state.pnlCustom = { from: null, to: null };
     state.portfolio.holdings.forEach(function(h){
@@ -1475,6 +1476,13 @@
       (h.trades||[]).forEach(function(t){
         if (t.type === "sell") addBoth(t.date, "other", t.gain || 0);
       });
+    });
+    // Realized P/L from before this app was used. Display only - it is never
+    // added to cash or 총자산, because 그외 예수금 already holds the real
+    // balance those trades produced.
+    (state.portfolio.manualRealized||[]).forEach(function(m){
+      if (!m.date || !(m.amount || m.amount === 0)) return;
+      addBoth(m.date, m.kind === "vr" ? "vr" : "other", m.amount);
     });
     return { byYear: byYear, byMonth: byMonth, events: events };
   }
@@ -2731,7 +2739,14 @@
     });
     var manualRealizedTotal = 0;
     manual.forEach(function(h){ manualRealizedTotal += h.realizedPL || 0; });
-    var otherRealizedTotal = manualRealizedTotal + muRealizedTotal;
+    // Pre-app realized P/L typed in on the 손익 tab. It is P/L history only, so
+    // it belongs in these totals but never in cash or 총자산 below.
+    var priorVr = 0, priorOther = 0;
+    (state.portfolio.manualRealized||[]).forEach(function(m){
+      if (m.kind === "vr") priorVr += m.amount || 0; else priorOther += m.amount || 0;
+    });
+    vrRealizedTotal += priorVr;
+    var otherRealizedTotal = manualRealizedTotal + muRealizedTotal + priorOther;
     var totalRealized = vrRealizedTotal + otherRealizedTotal;
     var extraCash = state.portfolio.extraCash || 0;
     // 예수금은 VR Pool과 그외 예수금 둘로만 나눈다. 무매가 굴리는 현금도
@@ -3596,6 +3611,74 @@
       hint.textContent = "아직 스냅샷이 없어요 — 포트폴리오 탭을 한 번 열면 오늘 기록이 자동으로 남아요.";
       mainArea.appendChild(hint);
     }
+
+    renderManualRealizedCard();
+  }
+
+  // Lets the user type in realized P/L that happened before they started using
+  // the app, so the year/month/period tables above aren't missing their history.
+  function renderManualRealizedCard(){
+    var list = state.portfolio.manualRealized || [];
+    var sorted = list.slice().sort(function(a,b){ return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+    var totalVr = 0, totalOther = 0;
+    list.forEach(function(m){ if (m.kind === "vr") totalVr += m.amount; else totalOther += m.amount; });
+
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = "<h3>이 앱을 쓰기 전 실현손익 직접입력</h3>" +
+      '<div class="card-desc">앱에 매매를 기록하기 전에 확정된 손익을 여기에 적어두면, 위의 기간별·연도별·월별 표에 같이 합산돼요. ' +
+      '예수금과 총자산은 <b>바뀌지 않아요</b> — 지금 예수금에는 이미 그 매매 결과가 들어가 있으니까 여기서 또 더하면 두 번 세는 셈이 되거든요.</div>' +
+      '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);margin-top:12px;">' +
+        field("날짜", '<input id="mrDate" type="date" autocomplete="off" value="' + todayStr() + '" />') +
+        field("구분", '<select id="mrKind"><option value="other">그외</option><option value="vr">VR</option></select>') +
+        field("실현손익 ($)", '<input id="mrAmount" type="text" autocomplete="off" inputmode="decimal" placeholder="예: 1250.30 (손실은 -1250.30)" />') +
+        field("메모", '<input id="mrMemo" type="text" autocomplete="off" placeholder="예: 2025년 TQQQ 매도" />') +
+      '</div>' +
+      '<div class="form-actions"><button type="button" class="btn btn-primary" id="mrAdd">추가</button></div>' +
+      '<div class="footnote" id="mrMsg" style="margin-top:6px;"></div>';
+
+    if (sorted.length){
+      var rows = sorted.map(function(m){
+        return '<tr>' +
+          '<td data-label="날짜">' + fmtDate(m.date) + '</td>' +
+          '<td data-label="구분">' + (m.kind === "vr" ? "VR" : "그외") + '</td>' +
+          '<td class="num" data-label="실현손익" style="color:' + pnlRowColor(m.amount) + '">' + fmtCurrency(m.amount) + '</td>' +
+          '<td data-label="메모">' + escapeHtml(m.memo || "") + '</td>' +
+          '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost btn-danger" data-del="' + m.id + '">삭제</button></td>' +
+        '</tr>';
+      }).join("");
+      card.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile">' +
+        '<thead><tr><th>날짜</th><th>구분</th><th class="num">실현손익</th><th>메모</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table></div>' +
+        '<div class="footnote" style="margin-top:8px;">직접입력 합계 · VR ' + fmtCurrency(totalVr) + ' / 그외 ' + fmtCurrency(totalOther) + '</div>';
+    }
+    mainArea.appendChild(card);
+
+    var addBtn = card.querySelector("#mrAdd");
+    addBtn.addEventListener("click", function(){
+      var dateEl = document.getElementById("mrDate");
+      var amtEl = document.getElementById("mrAmount");
+      var msg = document.getElementById("mrMsg");
+      var amount = parseFloat(String(amtEl.value).replace(/[, $]/g, ""));
+      if (!dateEl.value){ msg.textContent = "날짜를 골라주세요."; return; }
+      if (isNaN(amount)){ msg.textContent = "실현손익 금액을 숫자로 적어주세요. 손실이면 앞에 - 를 붙이세요."; return; }
+      state.portfolio.manualRealized.push({
+        id: uid(), date: dateEl.value,
+        kind: document.getElementById("mrKind").value === "vr" ? "vr" : "other",
+        amount: round2(amount),
+        memo: (document.getElementById("mrMemo").value || "").trim()
+      });
+      saveState();
+      renderMain();
+    });
+    Array.prototype.forEach.call(card.querySelectorAll("[data-del]"), function(b){
+      b.addEventListener("click", function(){
+        var id = b.getAttribute("data-del");
+        state.portfolio.manualRealized = state.portfolio.manualRealized.filter(function(m){ return m.id !== id; });
+        saveState();
+        renderMain();
+      });
+    });
   }
 
   var ALLOC_CATEGORICAL = ["var(--s-vr)", "var(--s-spy)", "var(--s-qqq)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)"];
