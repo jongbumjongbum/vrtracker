@@ -3426,8 +3426,6 @@
     var pnlBuckets0 = realizedPLBuckets();
     var preset = state.pnlPreset || "thisMonth";
     var custom = state.pnlCustom || { from: null, to: null };
-    var range = resolvePnlRange(preset, custom);
-    var ranged = sumRealizedInRange(pnlBuckets0.events, range);
     var rangeCard = document.createElement("div");
     rangeCard.className = "card";
     rangeCard.innerHTML = "<h3>기간별 실현손익</h3>" +
@@ -3439,37 +3437,63 @@
       '</div>' +
       (preset === "custom"
         ? ('<div class="form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;max-width:420px;">' +
-            field("시작일", '<input id="pnlFrom" type="date" value="' + (custom.from||"") + '" />') +
-            field("종료일", '<input id="pnlTo" type="date" value="' + (custom.to||"") + '" />') +
+            field("시작일", '<input id="pnlFrom" type="date" autocomplete="off" value="' + (custom.from||"") + '" />') +
+            field("종료일", '<input id="pnlTo" type="date" autocomplete="off" value="' + (custom.to||"") + '" />') +
           '</div>')
         : '') +
-      '<div class="footnote" style="margin-top:8px;">' +
-        (range.from || range.to
-          ? ('기간: ' + (range.from ? fmtDate(range.from) : "처음") + ' ~ ' + (range.to ? fmtDate(range.to) : "지금") + ' · 매도 ' + ranged.count + '건')
-          : ('전체 기간 · 매도 ' + ranged.count + '건')) +
-      '</div>' +
-      '<div class="stat-strip" style="margin-top:12px;">' +
-        stat("합계", fmtCurrency(ranged.total), false, pnlRowColor(ranged.total)) +
-        stat("VR", fmtCurrency(ranged.vr), false, pnlRowColor(ranged.vr)) +
-        stat("그외", fmtCurrency(ranged.other), false, pnlRowColor(ranged.other)) +
-      '</div>';
+      '<div class="footnote" id="pnlRangeFoot" style="margin-top:8px;"></div>' +
+      '<div class="stat-strip" id="pnlRangeStats" style="margin-top:12px;"></div>';
     mainArea.appendChild(rangeCard);
+    // The summary is repainted in place (never via renderMain) so that typing or
+    // scrolling a mobile date picker - which fires "change" on every spin - does
+    // not tear the inputs out of the DOM mid-entry.
+    function paintRangeSummary(){
+      var cur = state.pnlCustom || { from: null, to: null };
+      var r = resolvePnlRange(state.pnlPreset || "thisMonth", cur);
+      var sum = sumRealizedInRange(pnlBuckets0.events, r);
+      var foot = document.getElementById("pnlRangeFoot");
+      var strip = document.getElementById("pnlRangeStats");
+      if (foot){
+        foot.textContent = (r.from || r.to)
+          ? ('기간: ' + (r.from ? fmtDate(r.from) : "처음") + ' ~ ' + (r.to ? fmtDate(r.to) : "지금") + ' · 매도 ' + sum.count + '건')
+          : ('전체 기간 · 매도 ' + sum.count + '건');
+      }
+      if (strip){
+        strip.innerHTML =
+          stat("합계", fmtCurrency(sum.total), false, pnlRowColor(sum.total)) +
+          stat("VR", fmtCurrency(sum.vr), false, pnlRowColor(sum.vr)) +
+          stat("그외", fmtCurrency(sum.other), false, pnlRowColor(sum.other));
+      }
+    }
+    paintRangeSummary();
     Array.prototype.forEach.call(rangeCard.querySelectorAll(".preset-btn"), function(b){
       b.addEventListener("click", function(){
-        state.pnlPreset = b.getAttribute("data-preset");
+        var key = b.getAttribute("data-preset");
+        state.pnlPreset = key;
+        // Starting "직접입력" with both dates blank looks broken, so seed it with
+        // this month and let the user adjust either end.
+        if (key === "custom"){
+          var c = state.pnlCustom || {};
+          if (!c.from && !c.to){
+            var d = resolvePnlRange("thisMonth", null);
+            state.pnlCustom = { from: d.from, to: ymd(new Date()) };
+          }
+        }
         saveState();
         renderMain();
       });
     });
     var fromEl = document.getElementById("pnlFrom"), toEl = document.getElementById("pnlTo");
     if (fromEl && toEl){
-      function commitCustom(){
+      var commitCustom = function(){
         state.pnlCustom = { from: fromEl.value || null, to: toEl.value || null };
         saveState();
-        renderMain();
-      }
+        paintRangeSummary();
+      };
       fromEl.addEventListener("change", commitCustom);
+      fromEl.addEventListener("input", commitCustom);
       toEl.addEventListener("change", commitCustom);
+      toEl.addEventListener("input", commitCustom);
     }
 
     var monthly = monthlySnapshots();
