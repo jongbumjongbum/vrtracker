@@ -377,6 +377,12 @@
     padding: 12px 14px; display: flex; flex-direction: column; gap: 4px;
   }
   .stat .label { font-size: 11px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; }
+  /* 칸 제목 옆에 붙는 설명은 줄을 바꿔서 흐리게 — 안 그러면 제목과 한 덩어리로
+     읽혀서 오히려 더 헷갈린다. */
+  .stat .label .hint {
+    display: block; margin-top: 3px; text-transform: none; letter-spacing: 0;
+    font-size: 10.5px; line-height: 1.45; color: var(--ink-soft); opacity: .8;
+  }
   .stat .value { font-size: 18px; font-weight: 650; }
   .stat .value.small { font-size: 15px; }
 
@@ -1470,7 +1476,7 @@
     var before = replayManualHolding(h, seed);
     mutate(h.trades);
     var after = replayManualHolding(h, seed);
-    state.portfolio.extraCash = round2((state.portfolio.extraCash || 0) + (after - before));
+    state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + (after - before));
   }
 
 
@@ -1818,6 +1824,20 @@
   }
   function fmtCurrency(usdAmount){ return fmtCurrencyDigits(usdAmount, MONEY_DIGITS); }
   function fmtCurrency2(usdAmount){ return fmtCurrency(usdAmount); }
+  // 포트폴리오가 원화 보기일 때는 읽는 숫자만이 아니라 적는 숫자도 원화여야
+  // 한다. 저장은 언제나 달러 기준이라, 보여줄 때 곱하고 받을 때 되돌린다.
+  function krwViewRate(){
+    return (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw) ? state.fx.usdkrw : null;
+  }
+  function curSymbol(){ return krwViewRate() ? "₩" : "$"; }
+  function usdToInputValue(usd){
+    var r = krwViewRate();
+    return r ? Math.round((usd||0) * r) : (usd||0);
+  }
+  function inputValueToUsd(v){
+    var r = krwViewRate();
+    return r ? round4(v / r) : v;
+  }
 
   /* ---------------- rendering ---------------- */
   var mainArea = document.getElementById("mainArea");
@@ -2219,7 +2239,7 @@
         fmtMoney0((last.qty || 0) * ((realAvg != null && realAvg > 0) ? realAvg : costBasis.avgCost))) +
       stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
       stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
-      stat("실현손익 (지금까지 매도로 확정된 손익)", fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
+      stat('실현손익 <span class="hint">이 VR에 기록한 매도만 · 손익 탭에 직접 적은 과거분 제외</span>', fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
       '<div class="stat"><div class="label">실제평단 (직접입력, 이후 사이클 체결이 자동 반영돼요)</div>' +
         '<input id="realAvgCostInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input" style="width:100%;" ' +
         'value="' + (realAvg != null ? realAvg : "") + '" placeholder="예: 45.20" /></div>' +
@@ -2622,7 +2642,7 @@
       stat("총자산 (평가금+잔금) · 시드대비", fmtMoney0(totalAsset) +
         (seedReturnPct != null ? (" (" + (seedReturn>0?"+":"") + fmtPct(seedReturnPct,2) + ")") : ""),
         false, muPnlColor(seedReturn)) +
-      stat("실현손익", fmtMoney0(last.realizedPL||0), false, muPnlColor(last.realizedPL||0));
+      stat('실현손익 <span class="hint">이 무매에 기록한 매도만 · 손익 탭에 직접 적은 과거분 제외</span>', fmtMoney0(last.realizedPL||0), false, muPnlColor(last.realizedPL||0));
     mainArea.appendChild(stats);
 
     var plan = muOrderPlan(inst, last);
@@ -3051,20 +3071,27 @@
       '</div>' +
       stat("예수금 합계 (VR Pool + 그외, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
-      '<div class="stat"><div class="label">└ 그외 예수금 <span class="hint">VR Pool 말고 나머지 현금 전부</span></div>' +
-        '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input" style="width:100%;" ' +
-        'value="' + extraCash + '" placeholder="예: 500" /></div>' +
+      '<div class="stat"><div class="label">└ 그외 예수금 <span class="hint">VR Pool 말고 나머지 현금 전부 · ' + curSymbol() + ' 기준</span></div>' +
+        '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" class="cell-input" style="width:100%;" ' +
+        'value="' + usdToInputValue(extraCash) + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
       stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit)) +
-      stat("실현손익 합계 (VR+그외, 매도로 확정된 손익)", fmtCurrency(totalRealized), false, pfPnlColor(totalRealized)) +
-      stat("└ VR 실현손익", fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
-      stat("└ 그외 실현손익", fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
+      stat("실현손익 합계 (VR+그외)" + realizedHint(totalRealized - priorVr - priorOther, priorVr + priorOther),
+           fmtCurrency(totalRealized), false, pfPnlColor(totalRealized)) +
+      stat("└ VR 실현손익" + realizedHint(vrRealizedTotal - priorVr, priorVr),
+           fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
+      stat("└ 그외 실현손익" + realizedHint(otherRealizedTotal - priorOther, priorOther),
+           fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
     mainArea.appendChild(stats);
 
     var extraCashInput = document.getElementById("extraCashInput");
     extraCashInput.addEventListener("change", function(){
       var v = parseFloat(this.value);
-      state.portfolio.extraCash = isNaN(v) ? 0 : v;
+      // 원화로 보는 중이면 원화 → 달러로 되돌린다. 다만 값을 안 고치고 칸에서
+      // 나가기만 했을 땐 그대로 두어야, 환산-역환산 반올림으로 잔액이 조금씩
+      // 흔들리는 일이 없다.
+      if (!isNaN(v) && v === usdToInputValue(extraCash)) return;
+      state.portfolio.extraCash = isNaN(v) ? 0 : inputValueToUsd(v);
       saveState();
       renderMain();
     });
@@ -3082,7 +3109,7 @@
           kind: t.type === "buy" ? "매수" : "매도",
           amount: (t.type === "buy" ? -1 : 1) * t.qty * t.price,
           note: h.ticker + " " + t.qty + "주 " + (t.type === "buy" ? "매수" : "매도") +
-                (t.type === "sell" ? (" (실현손익 " + fmtMoney0(t.gain||0) + ")") : "")
+                (t.type === "sell" ? (" (실현손익 " + fmtCurrency(t.gain||0) + ")") : "")
         });
       });
     });
@@ -3093,14 +3120,14 @@
     var cashLogRows = allCashRows.slice().reverse().map(function(e){
       var color = e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)");
       return '<tr><td data-label="날짜">' + fmtDate(e.date) + '</td><td data-label="구분">' + escapeHtml(e.kind) + '</td>' +
-        '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtMoney0(e.amount) + '</td>' +
+        '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtCurrency(e.amount) + '</td>' +
         '<td data-label="메모">' + escapeHtml(e.note||"") + '</td></tr>';
     }).join("");
     cashLogCard.innerHTML = "<h3>VR 외 예수금 변동내역</h3>" +
       '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. 아래 "직접 추가한 종목"에서 매수/매도를 기록해도 여기 자동으로 남아요.</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,1fr);align-items:end;">' +
         field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
-        field("금액 ($)", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 500" />') +
+        field("금액 (" + curSymbol() + ")", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
       '</div>' +
       (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
@@ -3111,7 +3138,8 @@
       var type = document.getElementById("cashLogType").value;
       var amt = parseFloat(document.getElementById("cashLogAmount").value);
       if (isNaN(amt) || amt <= 0){ alert("금액을 입력해주세요."); return; }
-      var signed = type === "in" ? amt : -amt;
+      var usd = inputValueToUsd(amt);
+      var signed = type === "in" ? usd : -usd;
       state.portfolio.extraCash = (state.portfolio.extraCash||0) + signed;
       pushCashLog(type === "in" ? "입금" : "출금", signed, todayStr(), "");
       saveState();
@@ -3204,25 +3232,26 @@
       var typeTxt = x.t.type === "buy" ? "매수" : "매도";
       var cls = x.t.type === "buy" ? "signal-buy" : "signal-sell";
       var amount = x.t.qty * x.t.price;
-      var gainCell = x.t.type === "sell" ? ('<span style="color:' + (x.t.gain>0?"var(--buy)":(x.t.gain<0?"var(--sell)":"var(--ink-soft)")) + '">' + fmtMoney0(x.t.gain) + '</span>') : '<span class="footnote">–</span>';
+      var gainCell = x.t.type === "sell" ? ('<span style="color:' + (x.t.gain>0?"var(--buy)":(x.t.gain<0?"var(--sell)":"var(--ink-soft)")) + '">' + fmtCurrency(x.t.gain) + '</span>') : '<span class="footnote">–</span>';
       var trKey = "trade:" + x.t.id;
       return '<tr class="' + rowOpenClass(trKey).replace(/^ /,"") + '">' +
         rowHeadCell(trKey,
           fmtDate(x.t.date) + ' ' + escapeHtml(x.h.ticker),
-          typeTxt + ' ' + x.t.qty + '주 · ' + fmtMoney0(amount)) +
+          typeTxt + ' ' + x.t.qty + '주 · ' + fmtCurrency(amount)) +
         '<td data-label="날짜">' + fmtDate(x.t.date) + '</td>' +
         '<td data-label="종목">' + escapeHtml(x.h.ticker) + '</td>' +
         '<td data-label="구분"><span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + typeTxt + '</span></td>' +
         '<td class="num" data-label="수량">' + x.t.qty + '</td>' +
-        '<td class="num" data-label="가격">' + fmtMoney(x.t.price) + '</td>' +
-        '<td class="num" data-label="금액">' + fmtMoney0(amount) + '</td>' +
+        '<td class="num" data-label="가격">' + fmtCurrency(x.t.price) + '</td>' +
+        '<td class="num" data-label="금액">' + fmtCurrency(amount) + '</td>' +
         '<td class="num" data-label="실현손익">' + gainCell + '</td>' +
         '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost trade-edit" data-h="' + x.h.id + '" data-t="' + x.t.id + '">수정</button> ' +
           '<button type="button" class="btn btn-sm btn-ghost btn-danger trade-del" data-h="' + x.h.id + '" data-t="' + x.t.id + '">삭제</button></td></tr>';
     }).join("");
     manCard.innerHTML = "<h3>직접 추가한 종목 (그외에 포함)</h3>" +
       '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.<br>' +
-        '<b>실제로 사고판 건 아래 "매수/매도 기록 추가"로 넣어주세요.</b> 표의 수량·평단을 직접 고치면 예수금과 실현손익에는 반영되지 않아요 (입력 실수 정정용이에요).</div>' +
+        '<b>실제로 사고판 건 아래 "매수/매도 기록 추가"로 넣어주세요.</b> 표의 수량·평단을 직접 고치면 예수금과 실현손익에는 반영되지 않아요 (입력 실수 정정용이에요).<br>' +
+        '표의 <b>실현손익 칸은 아래 매수/매도 기록으로 확정된 것만</b> 보여줘요 — 손익 탭에 직접 적은 "이 앱 쓰기 전 실현손익"은 여기 안 들어가고, 맨 위 "실현손익 합계"에만 더해져요.</div>' +
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>' +
       '<h3 style="margin-top:20px;font-size:14px;">매수/매도 기록 추가</h3>' +
@@ -3255,7 +3284,7 @@
       btn.addEventListener("click", function(){
         var f = findTrade(btn.getAttribute("data-h"), btn.getAttribute("data-t"));
         if (!f) return;
-        var label = fmtDate(f.t.date) + " " + f.h.ticker + " " + (f.t.type==="buy"?"매수":"매도") + " " + f.t.qty + "주 @ " + fmtMoney(f.t.price);
+        var label = fmtDate(f.t.date) + " " + f.h.ticker + " " + (f.t.type==="buy"?"매수":"매도") + " " + f.t.qty + "주 @ " + fmtCurrency(f.t.price);
         if (!confirm(label + "\n\n이 거래를 삭제할까요?\n수량·평단·실현손익과 예수금이 이 거래가 없었던 상태로 다시 계산돼요.")) return;
         mutateManualTrades(f.h, function(trades){
           var i = trades.findIndex(function(x){ return x.id === f.t.id; });
@@ -3694,7 +3723,7 @@
     var rangeCard = document.createElement("div");
     rangeCard.className = "card";
     rangeCard.innerHTML = "<h3>기간별 실현손익</h3>" +
-      '<div class="card-desc">보고 싶은 기간을 고르면, 그 사이에 매도로 확정된 손익만 아래에 합산해서 보여줘요. 아래 금액은 기록된 매매에서 자동으로 계산되는 결과라서 직접 고쳐 쓸 수 없어요.</div>' +
+      '<div class="card-desc">보고 싶은 기간을 고르면, 그 사이에 매도로 확정된 손익만 아래에 합산해서 보여줘요. <b>맨 아래에서 직접 적은 "이 앱 쓰기 전 실현손익"도 그 연월에 맞춰 같이 더해져요.</b> 아래 금액은 기록된 매매에서 자동으로 계산되는 결과라서 직접 고쳐 쓸 수 없어요.</div>' +
       '<div class="preset-row">' +
         PNL_PRESETS.map(function(p){
           return '<button type="button" class="btn btn-sm preset-btn' + (p.key===preset?" active":"") + '" data-preset="' + p.key + '">' + p.label + '</button>';
@@ -3808,13 +3837,13 @@
 
     realizedCard(
       "실현손익 연도별",
-      "매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요. 맨 아래에서 직접 적은 과거 실현손익도 같이 들어가 있어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
       "realizedYearChartHost",
       realizedPoints(buckets.byYear, function(k){ return k + "년"; })
     );
     realizedCard(
       "실현손익 월별",
-      "해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요. 맨 아래에서 직접 적은 과거 실현손익도 같이 들어가 있어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
       "realizedMonthChartHost",
       realizedPoints(buckets.byMonth, function(k){ return k; })
     );
@@ -4183,6 +4212,14 @@
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
   }
 
+  // 포트폴리오의 실현손익 칸에는 손익 탭에서 직접 적은 "이 앱 쓰기 전 실현손익"이
+  // 같이 더해져 있다. 합계만 보면 그게 섞였는지 알 수 없어서, 섞였을 때는
+  // 라벨에 얼마씩인지 쪼개서 적어준다.
+  function realizedHint(recorded, prior){
+    if (!prior) return ' <span class="hint">앱에 기록한 매도만 · 직접 적은 과거분 없음</span>';
+    return ' <span class="hint">앱에 기록한 매도 ' + fmtCurrency(recorded) +
+      ' + 손익 탭에 직접 적은 과거분 ' + fmtCurrency(prior) + '</span>';
+  }
   function stat(label, value, isPlain, color){
     return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (isPlain?"":"num") + '"' +
       (color ? (' style="color:' + color + '"') : '') + '>' + value + '</div></div>';
