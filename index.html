@@ -1305,8 +1305,9 @@
     });
   }
 
-  function pushCashLog(kind, amount, date, note, tradeId){
-    state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "", tradeId: tradeId || null });
+  // 입금/출금만 저장한다. 매수·매도 줄은 거래 기록에서 파생해 그린다.
+  function pushCashLog(kind, amount, date, note){
+    state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "" });
     state.portfolio.cashLog.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
   }
 
@@ -1364,9 +1365,7 @@
     var after = replayManualHolding(h, seed);
     state.portfolio.extraCash = round2((state.portfolio.extraCash || 0) + (after - before));
   }
-  function removeCashLogForTrade(tradeId){
-    state.portfolio.cashLog = state.portfolio.cashLog.filter(function(e){ return e.tradeId !== tradeId; });
-  }
+
 
   function aggregateVrHoldingsByTicker(){
     var map = {};
@@ -2755,7 +2754,26 @@
 
     var cashLogCard = document.createElement("div");
     cashLogCard.className = "card";
-    var cashLogRows = state.portfolio.cashLog.slice().reverse().map(function(e){
+    // 거래 줄은 저장하지 않고 h.trades에서 매번 만들어 낸다. 예전엔 기록 시점에
+    // 로그를 저장해서, 거래를 수정하면 옛 줄이 그대로 남아 같은 매도가 두 번
+    // 보였다. 파생으로 바꾸면 그런 유령 줄이 생길 수 없다.
+    var derivedCashRows = [];
+    state.portfolio.holdings.forEach(function(h){
+      (h.trades||[]).forEach(function(t){
+        derivedCashRows.push({
+          date: t.date,
+          kind: t.type === "buy" ? "매수" : "매도",
+          amount: (t.type === "buy" ? -1 : 1) * t.qty * t.price,
+          note: h.ticker + " " + t.qty + "주 " + (t.type === "buy" ? "매수" : "매도") +
+                (t.type === "sell" ? (" (실현손익 " + fmtMoney0(t.gain||0) + ")") : "")
+        });
+      });
+    });
+    var allCashRows = state.portfolio.cashLog
+      .filter(function(e){ return e.kind === "입금" || e.kind === "출금"; })
+      .concat(derivedCashRows)
+      .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+    var cashLogRows = allCashRows.slice().reverse().map(function(e){
       var color = e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)");
       return '<tr><td data-label="날짜">' + fmtDate(e.date) + '</td><td data-label="구분">' + escapeHtml(e.kind) + '</td>' +
         '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtMoney0(e.amount) + '</td>' +
@@ -2921,7 +2939,6 @@
           var i = trades.findIndex(function(x){ return x.id === f.t.id; });
           if (i !== -1) trades.splice(i, 1);
         });
-        removeCashLogForTrade(f.t.id);
         saveState();
         renderMain();
       });
@@ -2949,11 +2966,8 @@
           t.qty = nq; t.price = np; t.date = ds.trim(); t.type = nt;
           trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
         });
-        removeCashLogForTrade(f.t.id);
         var rec = (f.h.trades||[]).find(function(x){ return x.id === f.t.id; });
         if (rec){
-          if (rec.type === "buy") pushCashLog("매수", -(rec.qty*rec.price), rec.date, f.h.ticker + " " + rec.qty + "주 매수", rec.id);
-          else pushCashLog("매도", rec.qty*rec.price, rec.date, f.h.ticker + " " + rec.qty + "주 매도 (실현손익 " + fmtMoney0(rec.gain||0) + ")", rec.id);
         }
         saveState();
         renderMain();
@@ -2979,9 +2993,7 @@
         var rec = h.trades.find(function(t){ return t.id === tradeId; });
         h.currentPrice = price;
         if (type === "buy"){
-          pushCashLog("매수", -(rec.qty*rec.price), date, h.ticker + " " + rec.qty + "주 매수", tradeId);
         } else {
-          pushCashLog("매도", rec.qty*rec.price, date, h.ticker + " " + rec.qty + "주 매도 (실현손익 " + fmtMoney0(rec.gain||0) + ")", tradeId);
           if (rec.qty < qty){ alert("보유수량보다 많이 입력해서 " + rec.qty + "주만 매도로 기록했어요."); }
         }
         saveState();
