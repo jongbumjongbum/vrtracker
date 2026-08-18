@@ -465,9 +465,12 @@
   .approval-section-title:first-child { margin-top: 0; }
 
   .mode-switch, .currency-toggle { display: flex; gap: 4px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
+  .mode-switch { flex-wrap: wrap; }
+  .mode-switch button { flex: 1 1 auto; min-width: 54px; }
   .mode-switch button, .currency-toggle button {
-    border: none; background: transparent; color: var(--ink-soft); padding: 7px 10px;
+    border: none; background: transparent; color: var(--ink-soft); padding: 7px 8px;
     border-radius: 7px; cursor: pointer; font-size: 12.5px; font-weight: 600; flex: 1;
+    white-space: nowrap;
   }
   .mode-switch button.active, .currency-toggle button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
   .currency-toggle { flex: 0 0 auto; }
@@ -506,6 +509,7 @@
       <button type="button" data-mode="mu">무매</button>
       <button type="button" data-mode="portfolio">포트폴리오</button>
       <button type="button" data-mode="pnl">손익</button>
+      <button type="button" data-mode="chart">차트</button>
     </div>
 
     <button class="btn btn-primary btn-block" id="newInstanceBtn" type="button">+ 새 VR 만들기</button>
@@ -1756,10 +1760,10 @@
     });
     var newBtn = document.getElementById("newInstanceBtn");
     newBtn.textContent = state.viewMode === "mu" ? "+ 새 무매 만들기" : "+ 새 VR 만들기";
-    newBtn.style.display = (state.viewMode === "portfolio" || state.viewMode === "pnl") ? "none" : "";
+    newBtn.style.display = (state.viewMode === "portfolio" || state.viewMode === "pnl" || state.viewMode === "chart") ? "none" : "";
 
     instanceList.innerHTML = "";
-    if (state.viewMode === "pnl") return;
+    if (state.viewMode === "pnl" || state.viewMode === "chart") return;
     if (state.viewMode === "mu"){
       renderMuSidebarList();
       return;
@@ -1866,6 +1870,7 @@
     if (state.viewMode === "portfolio"){ renderPortfolio(); renderActionBar(); return; }
     if (state.viewMode === "mu"){ renderMuDetail(); renderActionBar(); return; }
     if (state.viewMode === "pnl"){ renderPnL(); renderActionBar(); return; }
+    if (state.viewMode === "chart"){ renderChartTab(); renderActionBar(); return; }
     var inst = state.instances.find(function(i){ return i.id === state.selectedId; });
     if (!inst){
       mainArea.innerHTML =
@@ -3070,6 +3075,234 @@
       state.portfolio.holdings.push({ id: uid(), ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
       saveState();
       renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
+    });
+  }
+
+  /* ---------------- 차트 탭 ---------------- */
+  // 조회 결과는 메모리에만 캐시한다. 시세와 같은 원칙으로 사용자가 [조회]를
+  // 누를 때만 API를 쓰고(250일치 1건 = 1크레딧), 탭을 오갈 때는 재조회하지 않는다.
+  var SERIES_CACHE = {};
+  var chartState = { symbol: "", range: 120, loading: false, note: null };
+  var CHART_RANGES = [
+    { key: 30,  label: "1개월" },
+    { key: 60,  label: "3개월" },
+    { key: 120, label: "6개월" },
+    { key: 250, label: "1년" }
+  ];
+
+  async function fetchTimeSeries(symbol){
+    var key = symbol.toUpperCase();
+    chartState.loading = true;
+    chartState.note = null;
+    try {
+      var url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(key) +
+        "&interval=1day&outputsize=250&apikey=" + TWELVEDATA_KEY;
+      var res = await fetch(url);
+      var json = await res.json();
+      var quota = describeQuotaError(json);
+      if (quota){ chartState.note = { text: quota, isError: true }; return false; }
+      if (!json || !json.values || !json.values.length){
+        chartState.note = { text: '"' + key + '" 데이터를 찾지 못했어요. 티커를 다시 확인해주세요.', isError: true };
+        return false;
+      }
+      // API는 최신순으로 주므로 과거→현재로 뒤집어 저장한다.
+      SERIES_CACHE[key] = json.values.slice().reverse().map(function(v){
+        return { date: v.datetime, close: parseFloat(v.close), high: parseFloat(v.high), low: parseFloat(v.low) };
+      }).filter(function(d){ return !isNaN(d.close); });
+      chartState.note = { text: key + " 차트를 불러왔어요.", isError: false };
+      return true;
+    } catch(e){
+      console.error("time series fetch failed", e);
+      chartState.note = { text: "차트 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", isError: true };
+      return false;
+    } finally {
+      chartState.loading = false;
+    }
+  }
+
+  // 이 티커를 실제로 들고 있으면 평단을 같이 그려서, 지금 가격이 내 평단
+  // 위인지 아래인지 한눈에 보이게 한다.
+  function myAvgCostFor(ticker){
+    var t = (ticker||"").toUpperCase(), qty = 0, cost = 0;
+    state.instances.forEach(function(inst){
+      if ((inst.ticker||"").toUpperCase() !== t) return;
+      if (inst.realAvgCost == null || !(inst.realAvgCost > 0)) return;
+      var q = lastState(inst).qty || 0;
+      qty += q; cost += q * inst.realAvgCost;
+    });
+    state.muInstances.forEach(function(m){
+      if ((m.ticker||"").toUpperCase() !== t) return;
+      var l = muLastState(m);
+      qty += (l.qty||0); cost += (l.qty||0) * (l.avgCost||0);
+    });
+    state.portfolio.holdings.forEach(function(h){
+      if ((h.ticker||"").toUpperCase() !== t) return;
+      qty += (h.qty||0); cost += (h.qty||0) * (h.avgCost||0);
+    });
+    return qty > 0 ? cost/qty : null;
+  }
+
+  function renderPriceChart(host, series, avgCost){
+    host.innerHTML = "";
+    if (!series.length){ host.innerHTML = '<div class="chart-empty">데이터가 없어요.</div>'; return; }
+    var W = host.clientWidth || 900, H = 320, pad = {l:64,r:16,t:14,b:26};
+    var wrap = document.createElement("div"); wrap.className = "chart-wrap";
+    var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
+    wrap.appendChild(svg);
+    var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
+    host.appendChild(wrap);
+
+    var lows = series.map(function(d){ return d.low; }).concat(avgCost ? [avgCost] : []);
+    var highs = series.map(function(d){ return d.high; }).concat(avgCost ? [avgCost] : []);
+    var minV = Math.min.apply(null, lows), maxV = Math.max.apply(null, highs);
+    if (minV === maxV){ minV -= 1; maxV += 1; }
+    var padV = (maxV-minV)*0.08; minV -= padV; maxV += padV;
+
+    function x(i){ return series.length===1 ? (pad.l+(W-pad.l-pad.r)/2) : pad.l + i/(series.length-1)*(W-pad.l-pad.r); }
+    function y(v){ return H-pad.b - (v-minV)/(maxV-minV)*(H-pad.t-pad.b); }
+
+    for (var i=0;i<=4;i++){
+      var gv = minV + (maxV-minV)*i/4, gy = y(gv);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
+      var lbl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
+      lbl.textContent = "$" + (Math.round(gv*100)/100).toLocaleString();
+      svg.appendChild(lbl);
+    }
+
+    var first = series[0].close, last = series[series.length-1].close;
+    var lineColor = last >= first ? cssVar('--buy') : cssVar('--sell');
+    var area = "M" + x(0) + "," + (H-pad.b) +
+      series.map(function(d,i){ return " L" + x(i) + "," + y(d.close); }).join("") +
+      " L" + x(series.length-1) + "," + (H-pad.b) + " Z";
+    svg.appendChild(svgEl("path", {d:area, fill:lineColor, opacity:0.10, stroke:"none"}));
+    svg.appendChild(svgEl("path", {
+      d: series.map(function(d,i){ return (i===0?"M":"L") + x(i) + "," + y(d.close); }).join(" "),
+      fill:"none", stroke:lineColor, "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round"
+    }));
+
+    if (avgCost){
+      var ay = y(avgCost);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:ay, y2:ay, stroke:cssVar('--accent'), "stroke-width":1.5, "stroke-dasharray":"5 4"}));
+      var al = svgEl("text", {x:pad.l+6, y:ay-5, "text-anchor":"start", "font-size":10, fill:cssVar('--accent-ink')});
+      al.textContent = "내 평단 $" + (Math.round(avgCost*100)/100).toLocaleString();
+      svg.appendChild(al);
+    }
+
+    var step = Math.max(1, Math.ceil(series.length/6));
+    series.forEach(function(d,i){
+      if (i % step !== 0 && i !== series.length-1) return;
+      var lbl2 = svgEl("text", {x:x(i), y:H-8, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
+      lbl2.textContent = d.date.slice(5);
+      svg.appendChild(lbl2);
+    });
+
+    // 마우스/터치 위치에서 가장 가까운 날짜를 집어 크로스헤어로 보여준다.
+    var cross = svgEl("line", {y1:pad.t, y2:H-pad.b, stroke:cssVar('--ink-soft'), "stroke-width":1, opacity:0});
+    svg.appendChild(cross);
+    var dot = svgEl("circle", {r:4, fill:lineColor, stroke:cssVar('--panel'), "stroke-width":1.5, opacity:0});
+    svg.appendChild(dot);
+    var hit = svgEl("rect", {x:pad.l, y:pad.t, width:Math.max(1,W-pad.l-pad.r), height:Math.max(1,H-pad.t-pad.b), fill:"transparent", style:"cursor:crosshair;"});
+    svg.appendChild(hit);
+    bindPointerTip(hit, function(ev){
+      var r = wrap.getBoundingClientRect();
+      var px = (ev.clientX - r.left) / r.width * W;
+      var idx = Math.round((px - pad.l) / Math.max(1,(W-pad.l-pad.r)) * (series.length-1));
+      idx = Math.max(0, Math.min(series.length-1, idx));
+      var d = series[idx];
+      cross.setAttribute("x1", x(idx)); cross.setAttribute("x2", x(idx)); cross.setAttribute("opacity", 0.5);
+      dot.setAttribute("cx", x(idx)); dot.setAttribute("cy", y(d.close)); dot.setAttribute("opacity", 1);
+      tooltip.style.left = (ev.clientX - r.left) + "px";
+      tooltip.style.top = (ev.clientY - r.top) + "px";
+      tooltip.style.opacity = 1;
+      tooltip.innerHTML = "<b>" + d.date + "</b><br/>종가 " + fmtMoney(d.close) +
+        "<br/><span class='footnote'>고 " + fmtMoney(d.high) + " · 저 " + fmtMoney(d.low) + "</span>" +
+        (avgCost ? ("<br/>평단대비 " + fmtPct((d.close-avgCost)/avgCost*100, 2)) : "");
+    }, function(){
+      tooltip.style.opacity = 0; cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0);
+    });
+  }
+
+  function renderChartTab(){
+    var head = document.createElement("div");
+    head.innerHTML =
+      '<div class="detail-head"><div><h2>차트</h2>' +
+      '<div class="sub">티커를 넣고 조회하면 일봉 차트를 그려요. 보유 중인 종목이면 내 평단도 함께 표시돼요.</div></div></div>';
+    mainArea.appendChild(head);
+
+    var owned = [];
+    function addOwned(t){ t = (t||"").toUpperCase(); if (t && owned.indexOf(t)===-1) owned.push(t); }
+    state.instances.forEach(function(i){ addOwned(i.ticker); });
+    state.muInstances.forEach(function(m){ addOwned(m.ticker); });
+    state.portfolio.holdings.forEach(function(h){ addOwned(h.ticker); });
+
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<div class="form-grid" style="grid-template-columns:1fr auto;align-items:end;max-width:520px;">' +
+        field("티커", '<input id="chartSymbol" type="text" autocomplete="off" placeholder="예: TQQQ" value="' + escapeHtml(chartState.symbol) + '" style="text-transform:uppercase;" />') +
+        '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="chartGoBtn" type="button">조회</button></div>' +
+      '</div>' +
+      (owned.length ? ('<div class="preset-row" style="margin-top:10px;">' +
+        owned.map(function(t){ return '<button type="button" class="btn btn-sm chart-own" data-t="' + t + '">' + escapeHtml(t) + '</button>'; }).join("") +
+        '</div>') : '') +
+      (chartState.note ? ('<div class="fetch-note' + (chartState.note.isError ? " err" : "") + '" style="margin-top:12px;margin-bottom:0;"><span>' + escapeHtml(chartState.note.text) + '</span></div>') : '');
+    mainArea.appendChild(card);
+
+    var sym = (chartState.symbol||"").toUpperCase();
+    var series = SERIES_CACHE[sym];
+    if (series && series.length){
+      var view = series.slice(-chartState.range);
+      var avg = myAvgCostFor(sym);
+      var first = view[0].close, last = view[view.length-1].close;
+      var chg = last - first, chgPct = first ? (chg/first*100) : 0;
+      var hi = Math.max.apply(null, view.map(function(d){ return d.high; }));
+      var lo = Math.min.apply(null, view.map(function(d){ return d.low; }));
+
+      var stats = document.createElement("div");
+      stats.className = "stat-strip";
+      stats.innerHTML =
+        stat(sym + " 현재가 (마지막 종가)", fmtMoney(last)) +
+        stat("기간 등락", fmtMoney(chg) + " (" + fmtPct(chgPct,2) + ")", false, chg>0?"var(--buy)":(chg<0?"var(--sell)":undefined)) +
+        stat("기간 최고", fmtMoney(hi)) +
+        stat("기간 최저", fmtMoney(lo)) +
+        (avg ? stat("내 평단", fmtMoney(avg)) : "") +
+        (avg ? stat("평단 대비", fmtPct((last-avg)/avg*100, 2), true, last>avg?"var(--buy)":(last<avg?"var(--sell)":undefined)) : "");
+      mainArea.appendChild(stats);
+
+      var chartCard = document.createElement("div");
+      chartCard.className = "card";
+      chartCard.innerHTML = "<h3>" + sym + " 일봉</h3>" +
+        '<div class="preset-row" style="margin-bottom:10px;">' +
+          CHART_RANGES.map(function(r){
+            return '<button type="button" class="btn btn-sm preset-btn' + (r.key===chartState.range?" active":"") + '" data-r="' + r.key + '">' + r.label + '</button>';
+          }).join("") +
+        '</div><div id="priceChartHost"></div>';
+      mainArea.appendChild(chartCard);
+      renderPriceChart(document.getElementById("priceChartHost"), view, avg);
+
+      Array.prototype.forEach.call(chartCard.querySelectorAll(".preset-btn"), function(b){
+        b.addEventListener("click", function(){
+          chartState.range = parseInt(b.getAttribute("data-r"), 10);
+          renderMain();   // 캐시된 데이터라 API 호출 없음
+        });
+      });
+    }
+
+    function go(sym2){
+      var v = (sym2 || document.getElementById("chartSymbol").value || "").trim().toUpperCase();
+      if (!v){ return; }
+      chartState.symbol = v;
+      if (SERIES_CACHE[v]){ chartState.note = null; renderMain(); return; }
+      var btn = document.getElementById("chartGoBtn");
+      btn.disabled = true; btn.textContent = "불러오는 중…";
+      fetchTimeSeries(v).then(function(){ renderMain(); });
+    }
+    document.getElementById("chartGoBtn").addEventListener("click", function(){ go(); });
+    document.getElementById("chartSymbol").addEventListener("keydown", function(e){
+      if (e.key === "Enter") go();
+    });
+    Array.prototype.forEach.call(card.querySelectorAll(".chart-own"), function(b){
+      b.addEventListener("click", function(){ go(b.getAttribute("data-t")); });
     });
   }
 
