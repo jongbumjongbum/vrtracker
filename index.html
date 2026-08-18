@@ -2726,7 +2726,8 @@
         '<td class="num" data-label="실현손익">' + gainCell + '</td></tr>';
     }).join("");
     manCard.innerHTML = "<h3>직접 추가한 종목 (그외에 포함)</h3>" +
-      '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.</div>' +
+      '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.<br>' +
+        '<b>실제로 사고판 건 아래 "매수/매도 기록 추가"로 넣어주세요.</b> 표의 수량·평단을 직접 고치면 예수금과 실현손익에는 반영되지 않아요 (입력 실수 정정용이에요).</div>' +
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>' +
       '<h3 style="margin-top:20px;font-size:14px;">매수/매도 기록 추가</h3>' +
@@ -3179,7 +3180,23 @@
       var h = holdings.find(function(x){ return x.id === id; });
       function commit(){ saveState(); renderMain(); }
       tr.querySelector(".h-ticker").addEventListener("change", function(){ h.ticker = this.value.trim().toUpperCase(); commit(); });
-      tr.querySelector(".h-qty").addEventListener("change", function(){ h.qty = parseFloat(this.value)||0; commit(); });
+      // Editing 수량 inline only moves the share count — it deliberately does
+      // NOT touch 예수금 or 실현손익. That's fine for fixing a typo, but if it's
+      // used to record an actual sale the cash silently stops matching the
+      // broker, so make the consequence explicit before accepting the change.
+      tr.querySelector(".h-qty").addEventListener("change", function(){
+        var oldQty = h.qty || 0, newQty = parseFloat(this.value) || 0;
+        if (newQty !== oldQty){
+          var msg = "보유수량을 " + oldQty + " → " + newQty + " 로 직접 고칩니다.\n\n" +
+            "이건 수량만 바꾸고 예수금·실현손익에는 반영되지 않아요.\n" +
+            "실제로 사고판 거라면 [취소]를 누르고 아래 \"매수/매도 기록 추가\"로 넣어주세요.\n" +
+            "(그래야 예수금이 줄거나 늘고, 실현손익도 자동으로 계산돼요)\n\n" +
+            "단순 입력 실수 정정이면 [확인]을 누르세요.";
+          if (!confirm(msg)){ this.value = oldQty; return; }
+        }
+        h.qty = newQty;
+        commit();
+      });
       tr.querySelector(".h-cost").addEventListener("change", function(){ h.avgCost = parseFloat(this.value)||0; commit(); });
       var priceInput = tr.querySelector(".h-price");
       if (priceInput){
