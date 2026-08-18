@@ -158,6 +158,13 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .fetch-note {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+    border-radius: 10px; padding: 10px 12px; margin: -6px 0 16px; font-size: 13px;
+  }
+  .fetch-note.err { border-color: var(--sell); background: var(--sell-soft); }
+
   .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
@@ -1505,14 +1512,21 @@
       var json = await res.json();
       if (json && json.rates && json.rates.KRW){
         state.fx = { usdkrw: json.rates.KRW, updatedAt: new Date().toISOString() };
+        priceFetchNote = { text: "환율을 새로 받아왔어요 (1 USD = " + json.rates.KRW.toFixed(2) + "원).", isError: false };
         saveState();
-        if (state.viewMode === "portfolio") renderMainPreservingInput();
+      } else {
+        priceFetchNote = { text: "환율을 받아오지 못했어요. 잠시 후 다시 눌러주세요.", isError: true };
       }
-    } catch(e){ console.error("fx fetch failed", e); }
+    } catch(e){
+      console.error("fx fetch failed", e);
+      priceFetchNote = { text: "환율 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", isError: true };
+    }
+    if (state.viewMode === "portfolio") renderMainPreservingInput();
   }
 
   var TWELVEDATA_KEY = "9d7a1fad48604a07874cb77f737f3557";
   var LIVE_PRICE_CACHE = {};
+  var priceFetchNote = null;   // 마지막 시세 조회 결과 안내 (배너)
   // The free tier allows 800 calls/day and every ticker in a batch costs one,
   // so a short TTL burns the whole day's quota well before the day is over
   // (and then no price loads at all). 15 minutes is plenty fresh here — the
@@ -1540,13 +1554,13 @@
     var now = Date.now();
     var uniq = [];
     tickers.forEach(function(t){ if (t && uniq.indexOf(t)===-1) uniq.push(t); });
-    var need = uniq.filter(function(t){
-      var c = LIVE_PRICE_CACHE[t];
-      if (c && c.failed) return (now - c.ts) > LIVE_PRICE_FAIL_TTL_MS;
-      return !c || (now - c.ts) > LIVE_PRICE_TTL_MS;
-    });
+    // 사용자가 직접 누른 조회라 TTL과 무관하게 항상 다시 받아온다. 이때
+    // 캐시를 지우지는 않는다 — 지워버리면 한도 초과로 실패했을 때 마지막
+    // 시세까지 함께 사라져 평가금이 0으로 떨어진다.
+    var need = uniq;
     if (!need.length) return false;
     var changed = false;
+    priceFetchNote = null;
     // Always stamp every requested ticker with "ts: now" below, success or
     // failure — that's what stops a failed call (rate limit, bad symbol,
     // network hiccup) from being retried on every single render. Previously
@@ -1561,6 +1575,14 @@
       var url = "https://api.twelvedata.com/price?symbol=" + encodeURIComponent(need.join(",")) + "&apikey=" + TWELVEDATA_KEY;
       var res = await fetch(url);
       var json = await res.json();
+      // 한도 초과는 조용히 실패하면 "왜 안 바뀌지"로만 보인다. 눌러서 생긴
+      // 일이니 왜 안 됐는지, 언제 다시 되는지까지 알려준다.
+      var apiErr = describeQuotaError(json);
+      if (apiErr){
+        priceFetchNote = { text: apiErr, isError: true };
+        need.forEach(markFailed);
+        return false;
+      }
       if (need.length === 1){
         if (json && json.price && !isNaN(parseFloat(json.price))){
           LIVE_PRICE_CACHE[need[0]] = { price: parseFloat(json.price), ts: now };
@@ -1581,10 +1603,30 @@
       }
     } catch(e){
       console.error("live price fetch failed", e);
+      priceFetchNote = { text: "시세 서버에 연결하지 못했어요. 인터넷 상태를 확인하고 다시 눌러주세요.", isError: true };
       need.forEach(markFailed);
     }
-    if (changed) persistPriceCache();
+    if (changed){
+      persistPriceCache();
+      priceFetchNote = { text: "시세를 새로 받아왔어요.", isError: false };
+    } else if (!priceFetchNote){
+      priceFetchNote = { text: "시세를 받아오지 못했어요. 잠시 후 다시 눌러주세요.", isError: true };
+    }
     return changed;
+  }
+
+  // Twelve Data는 한도 초과를 HTTP 200 + {code:429} 로 돌려준다.
+  // 분당 한도와 하루 한도는 대응이 달라서(잠깐 기다리기 vs 내일) 구분해준다.
+  function describeQuotaError(json){
+    if (!json || json.code !== 429) return null;
+    var msg = String(json.message || "");
+    if (/for the day|daily/i.test(msg)){
+      return "오늘 시세 조회 한도를 다 썼어요 (무료 요금제 하루 800회). 내일 다시 받아올 수 있고, 그때까지는 마지막으로 받아온 시세로 계산돼요.";
+    }
+    if (/current minute|per minute/i.test(msg)){
+      return "잠깐 사이에 너무 여러 번 조회했어요 (분당 8회 제한). 1분쯤 뒤에 다시 눌러주세요.";
+    }
+    return "시세 조회 한도에 걸렸어요. 잠시 후 다시 눌러주세요.";
   }
 
   // Since quotes are only fetched on demand now, the last fetched set has to
@@ -2714,6 +2756,18 @@
       : "환율 정보를 아직 못 가져왔어요. 지금은 USD로만 정확히 표시돼요 — 환율 새로고침을 눌러보세요.";
     mainArea.appendChild(fxNote);
 
+    if (priceFetchNote){
+      var note = document.createElement("div");
+      note.className = "fetch-note" + (priceFetchNote.isError ? " err" : "");
+      note.innerHTML = '<span>' + escapeHtml(priceFetchNote.text) + '</span>' +
+        '<button type="button" class="btn btn-sm btn-ghost" id="fetchNoteClose">닫기</button>';
+      mainArea.appendChild(note);
+      document.getElementById("fetchNoteClose").addEventListener("click", function(){
+        priceFetchNote = null;
+        renderMainPreservingInput();
+      });
+    }
+
     var stats = document.createElement("div");
     stats.className = "stat-strip";
     function pfPnlColor(p){ return p == null ? undefined : (p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : undefined)); }
@@ -3010,7 +3064,6 @@
     });
     document.getElementById("fxRefreshBtn").addEventListener("click", function(){ fetchFxRate(true); });
     document.getElementById("priceRefreshBtn").addEventListener("click", function(){
-      allTickers.forEach(function(t){ delete LIVE_PRICE_CACHE[t]; });
       fetchLivePrices(allTickers, true).then(function(){ renderMainPreservingInput(); });
     });
     document.getElementById("addHoldingBtn").addEventListener("click", function(){
