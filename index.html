@@ -2205,13 +2205,11 @@
         body = '<div class="guide-body sell"><div class="footnote">리버스 전환 첫날 · MOC 매도</div>' +
           '<div class="order-head"><span class="order-head-price">' + plan.sellQty + '주</span><span class="order-head-qty">종가매도</span></div></div>';
       } else if (plan.mode === "reverse"){
-        body = '<div class="guide-body buy"><div class="footnote">쿼터매수 (LOC)</div>' + muLadderRowsHtml(plan.buyLadder, plan.avgCost) + '</div>' +
+        body = '<div class="guide-body buy"><div class="footnote">쿼터매수 (LOC)</div>' + muBuyPlanHtml(plan.buy, plan.avgCost) + '</div>' +
           '<div class="guide-body sell"><div class="footnote">매도 (LOC)</div>' +
           '<div class="order-head"><span class="order-head-price">' + (plan.sellPrice!=null?fmtMoney(plan.sellPrice):"–") + '</span><span class="order-head-qty">× ' + plan.sellQty + '주</span></div></div>';
       } else {
-        body = (plan.buyLadders||[]).map(function(lad){
-          return '<div class="guide-body buy"><div class="footnote">' + lad.label + ' 매수 (LOC)</div>' + muLadderRowsHtml(lad.rows, plan.avgCost) + '</div>';
-        }).join("") +
+        body = '<div class="guide-body buy"><div class="footnote">매수 (LOC)</div>' + muBuyPlanHtml(plan.buy, plan.avgCost) + '</div>' +
         '<div class="guide-body sell"><div class="footnote">매도</div>' +
           '<div class="order-tail-row"><span>쿼터매도 LOC <b>' + (plan.sellQuarterPrice!=null?fmtMoney(plan.sellQuarterPrice):"–") + '</b> × ' + plan.sellQuarterQty + '주</span></div>' +
           '<div class="order-tail-row"><span>나머지 지정가 <b>' + (plan.sellRestPrice!=null?fmtMoney(plan.sellRestPrice):"–") + '</b> × ' + plan.sellRestQty + '주</span></div>' +
@@ -2407,19 +2405,23 @@
   // it only fires if the price collapses. Rendering them as one flat table
   // made a crash contingency look as immediate as the real order, so the head
   // is called out and the tail is folded under a "폭락장 대비" label.
-  function muLadderRowsHtml(rows, avgCost){
-    if (!rows || !rows.length) return '<div class="footnote">기준가가 없어 계산할 수 없어요 — 카드를 눌러 들어가서 기준가를 직접 넣어주세요.</div>';
-    var head = rows[0], tail = rows.slice(1);
-    var html =
-      '<div class="order-head">' +
-        '<span class="order-head-price">' + fmtMoney(head.price) + '</span>' +
-        '<span class="order-head-qty">× ' + head.qty + '주</span>' +
-        '<span class="footnote">' + vsAvgCell(head.price, avgCost) + '</span>' +
+  // 앵커(오늘 실제로 거는 주문) 여러 개 + 폭락 대비 사다리 하나를 함께 그린다.
+  function muBuyPlanHtml(buy, avgCost){
+    if (!buy || !buy.anchors || !buy.anchors.length){
+      return '<div class="footnote">기준가가 없어 계산할 수 없어요 — 카드를 눌러 들어가서 기준가를 직접 넣어주세요.</div>';
+    }
+    var html = buy.anchors.map(function(a){
+      return '<div class="order-head">' +
+        (a.label ? '<span class="footnote" style="flex:0 0 100%;">' + escapeHtml(a.label) + '</span>' : '') +
+        '<span class="order-head-price">' + fmtMoney(a.price) + '</span>' +
+        '<span class="order-head-qty">× ' + a.qty + '주</span>' +
+        '<span class="footnote">' + vsAvgCell(a.price, avgCost) + '</span>' +
       '</div>';
-    if (tail.length){
+    }).join("");
+    if (buy.crash && buy.crash.length){
       html += '<div class="order-tail">' +
-        '<div class="footnote" style="margin-bottom:4px;">+@ 폭락장 대비 추가 매수 <span class="hint">아래로 떨어지면 그때 체결돼요</span></div>' +
-        tail.map(function(r){
+        '<div class="footnote" style="margin-bottom:4px;">+@ 폭락장 대비 추가 매수 <span class="hint">위 주문이 다 체결되고 더 떨어지면 그때 순서대로</span></div>' +
+        buy.crash.map(function(r){
           return '<div class="order-tail-row"><span>LOC <b>' + fmtMoney(r.price) + '</b> × ' + r.qty + '주</span>' +
             '<span class="footnote">' + vsAvgCell(r.price, avgCost) + '</span></div>';
         }).join("") +
@@ -2440,7 +2442,7 @@
           '<span>매수점 <b>' + (plan.buyTrigger!=null?fmtMoney(plan.buyTrigger):"–") + '</b></span>' +
           '<span>매도 수량 <b>' + plan.sellQty + '주</b> @ ' + (plan.sellPrice!=null?fmtMoney(plan.sellPrice):"–") + '</span>' +
         '</div>' +
-        '<h4 style="margin-top:10px;font-size:13px;">쿼터매수 주문표 (LOC)</h4>' + muLadderRowsHtml(plan.buyLadder, plan.avgCost);
+        '<h4 style="margin-top:10px;font-size:13px;">쿼터매수 주문표 (LOC)</h4>' + muBuyPlanHtml(plan.buy, plan.avgCost);
     }
     var html = '<div class="card-desc">' + (plan.half==="back" ? "후반전: 오늘 매수시도금 전체를 ★지점 하나에" : "전반전: 오늘 매수시도금을 ★지점/평단에 절반씩") +
       ' LOC로 겁니다. 매도는 보유수량 1/4를 ★지점에 LOC로, 나머지는 평단 대비 고정가에 지정가로 겁니다.</div>' +
@@ -2450,9 +2452,7 @@
         '<span>매수점 <b>' + (plan.buyTrigger!=null?fmtMoney(plan.buyTrigger):"–") + '</b></span>' +
         '<span>오늘 매수시도금 <b>' + fmtMoney0(plan.dailyAmt) + '</b></span>' +
       '</div>';
-    (plan.buyLadders||[]).forEach(function(l){
-      html += '<h4 style="margin-top:10px;font-size:13px;">' + l.label + ' 매수 주문표 (LOC)</h4>' + muLadderRowsHtml(l.rows, plan.avgCost);
-    });
+    html += '<h4 style="margin-top:10px;font-size:13px;">매수 주문표 (LOC)</h4>' + muBuyPlanHtml(plan.buy, plan.avgCost);
     html += '<h4 style="margin-top:10px;font-size:13px;">매도 주문표</h4>' +
       '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">평단대비</th></tr></thead><tbody>' +
       '<tr><td data-label="구분">쿼터매도 (LOC)</td><td class="num" data-label="수량">' + plan.sellQuarterQty + '주</td><td class="num" data-label="가격">' + (plan.sellQuarterPrice!=null?fmtMoney(plan.sellQuarterPrice):"–") + '</td><td class="num" data-label="평단대비">' + vsAvgCell(plan.sellQuarterPrice, plan.avgCost) + '</td></tr>' +
@@ -3677,14 +3677,29 @@
   // because every rung is a Limit-on-Close order, so however far the close
   // actually falls, every rung whose limit clears it fills AT that close,
   // meaning a lower close simply buys more shares for roughly the same budget.
-  function muBuildAnchorLadder(anchorPrice, budget){
-    if (!(anchorPrice > 0) || !(budget > 0)) return [];
-    var qty1 = Math.max(1, Math.floor(budget / anchorPrice));
-    var rows = [{ price: round2(anchorPrice), qty: qty1 }];
-    var rest = buildBandLadder(qty1, budget, +1, 1, function(cumQty){
-      return cumQty <= 8;
+  // 그날 걸 매수 주문 = 지정가 앵커 몇 개 + 폭락 대비 사다리 하나.
+  // 사다리 단가는 "그날 매수시도금 ÷ 그 시점까지의 누적 수량"이라 앵커 가격과
+  // 무관하다. 전반전처럼 앵커가 둘(★지점·평단)일 때 앵커마다 사다리를 따로
+  // 만들면 완전히 같은 사다리가 두 벌 생기고, 급락하면 양쪽이 다 체결돼
+  // 1회 매수액의 두 배를 사게 된다. 사다리는 전체 금액 기준으로 하나만 만든다.
+  function muBuildBuyPlan(anchors, budget){
+    if (!(budget > 0)) return { anchors: [], crash: [] };
+    var rows = [], cum = 0;
+    anchors.forEach(function(a){
+      if (!(a.price > 0) || !(a.share > 0)) return;
+      var q = Math.max(1, Math.floor(a.share / a.price));
+      rows.push({ label: a.label, price: round2(a.price), qty: q });
+      cum += q;
     });
-    return rows.concat(rest.slice(1));
+    if (!rows.length) return { anchors: [], crash: [] };
+    // 사다리는 "더 떨어졌을 때" 걸리는 주문이므로 가장 낮은 앵커보다 아래만
+    // 남긴다. 앵커를 절반씩 나눠 걸면 전체 금액 기준 사다리의 첫 칸이 앵커보다
+    // 위에 나올 수 있는데, 그건 이미 앵커가 담당하는 구간이다.
+    var floorPrice = rows.reduce(function(m, r){ return Math.min(m, r.price); }, Infinity);
+    var crash = buildBandLadder(cum, budget, +1, 1, function(cumQty){
+      return cumQty <= 40;
+    }).filter(function(r){ return r.price < floorPrice; }).slice(0, 8);
+    return { anchors: rows, crash: crash };
   }
   function muOrderPlan(inst, last){
     var a = inst.splitCount;
@@ -3700,7 +3715,7 @@
       return {
         mode: "reverse", firstDay: false, starPrice: starPrice, buyTrigger: buyTrigger,
         avgCost: last.avgCost,
-        buyLadder: muBuildAnchorLadder(buyTrigger, quarterCash),
+        buy: muBuildBuyPlan([{ label: "쿼터매수", price: buyTrigger, share: quarterCash }], quarterCash),
         sellQty: Math.round(last.qty * sellFrac), sellPrice: starPrice
       };
     }
@@ -3726,14 +3741,19 @@
       var seedPrice = last.close || getLivePrice(inst.ticker) || inst.manualRefPrice || 0;
       plan.firstBuyRef = seedPrice;
       plan.needsRefPrice = !(seedPrice > 0);
-      plan.buyLadders = [{ label: "첫매수(큰수)", rows: muBuildAnchorLadder(buyTrigger || round2(seedPrice*1.12), dailyAmt) }];
+      plan.buy = muBuildBuyPlan([
+        { label: "첫매수(큰수)", price: buyTrigger || round2(seedPrice*1.12), share: dailyAmt }
+      ], dailyAmt);
     } else if (last.half === "front"){
-      plan.buyLadders = [
-        { label: "★지점", rows: muBuildAnchorLadder(buyTrigger, round2(dailyAmt/2)) },
-        { label: "평단", rows: muBuildAnchorLadder(last.avgCost, round2(dailyAmt/2)) }
-      ];
+      // 전반전은 그날 매수시도금을 ★지점과 평단에 절반씩 나눠 건다.
+      plan.buy = muBuildBuyPlan([
+        { label: "★지점", price: buyTrigger, share: round2(dailyAmt/2) },
+        { label: "평단", price: last.avgCost, share: round2(dailyAmt/2) }
+      ], dailyAmt);
     } else {
-      plan.buyLadders = [{ label: "★지점", rows: muBuildAnchorLadder(buyTrigger, dailyAmt) }];
+      plan.buy = muBuildBuyPlan([
+        { label: "★지점", price: buyTrigger, share: dailyAmt }
+      ], dailyAmt);
     }
     return plan;
   }
