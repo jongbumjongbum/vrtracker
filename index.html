@@ -165,6 +165,10 @@
   }
   .fetch-note.err { border-color: var(--sell); background: var(--sell-soft); }
 
+  .chart-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .chart-head-price { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .chart-foot { margin-top: 8px; }
+
   .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
@@ -3082,7 +3086,8 @@
   // 조회 결과는 메모리에만 캐시한다. 시세와 같은 원칙으로 사용자가 [조회]를
   // 누를 때만 API를 쓰고(250일치 1건 = 1크레딧), 탭을 오갈 때는 재조회하지 않는다.
   var SERIES_CACHE = {};
-  var chartState = { symbol: "", range: 120, loading: false, note: null };
+  var chartState = { symbol: "", ranges: {}, note: null };
+  var CHART_FIXED = ["TQQQ", "SOXL"];
   var CHART_RANGES = [
     { key: 30,  label: "1개월" },
     { key: 60,  label: "3개월" },
@@ -3090,10 +3095,29 @@
     { key: 250, label: "1년" }
   ];
 
-  async function fetchTimeSeries(symbol){
+  // 차트 데이터는 브라우저(localStorage)에만 남긴다. 클라우드 state에 넣으면
+  // 종목당 250개 캔들이 매 저장마다 동기화돼 용량만 커진다. 여기 저장해두면
+  // 새로고침해도 크레딧을 다시 쓰지 않는다.
+  var SERIES_TTL_MS = 12*60*60*1000;
+  function seriesKey(sym){ return "vrtracker_series_" + sym; }
+  function loadSeriesLocal(sym){
+    try {
+      var raw = localStorage.getItem(seriesKey(sym));
+      if (!raw) return null;
+      var o = JSON.parse(raw);
+      if (!o || !o.values || !o.values.length) return null;
+      if (Date.now() - (o.fetchedAt||0) > SERIES_TTL_MS) return null;
+      return o.values;
+    } catch(e){ return null; }
+  }
+  function saveSeriesLocal(sym, values){
+    try { localStorage.setItem(seriesKey(sym), JSON.stringify({ fetchedAt: Date.now(), values: values })); } catch(e){}
+  }
+
+  async function fetchTimeSeries(symbol, quiet){
     var key = symbol.toUpperCase();
-    chartState.loading = true;
-    chartState.note = null;
+    function note(text, isError){ if (!quiet) chartState.note = { text: text, isError: isError }; }
+    if (!quiet) chartState.note = null;
     try {
       var url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(key) +
         "&interval=1day&outputsize=250&apikey=" + TWELVEDATA_KEY;
@@ -3102,22 +3126,36 @@
       var quota = describeQuotaError(json);
       if (quota){ chartState.note = { text: quota, isError: true }; return false; }
       if (!json || !json.values || !json.values.length){
-        chartState.note = { text: '"' + key + '" 데이터를 찾지 못했어요. 티커를 다시 확인해주세요.', isError: true };
+        note('"' + key + '" 데이터를 찾지 못했어요. 티커를 다시 확인해주세요.', true);
         return false;
       }
       // API는 최신순으로 주므로 과거→현재로 뒤집어 저장한다.
       SERIES_CACHE[key] = json.values.slice().reverse().map(function(v){
         return { date: v.datetime, close: parseFloat(v.close), high: parseFloat(v.high), low: parseFloat(v.low) };
       }).filter(function(d){ return !isNaN(d.close); });
-      chartState.note = { text: key + " 차트를 불러왔어요.", isError: false };
+      saveSeriesLocal(key, SERIES_CACHE[key]);
+      note(key + " 차트를 불러왔어요.", false);
       return true;
     } catch(e){
       console.error("time series fetch failed", e);
-      chartState.note = { text: "차트 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", isError: true };
+      note("차트 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", true);
       return false;
-    } finally {
-      chartState.loading = false;
     }
+  }
+
+  // 메모리 → localStorage → API 순으로 확보한다. 이미 받아오는 중이면
+  // 중복 호출하지 않는다(고정 차트 두 개가 동시에 뜨기 때문).
+  var seriesFetching = {};
+  function ensureSeries(sym, quiet){
+    if (SERIES_CACHE[sym] || seriesFetching[sym]) return false;
+    var local = loadSeriesLocal(sym);
+    if (local){ SERIES_CACHE[sym] = local; return false; }
+    seriesFetching[sym] = true;
+    fetchTimeSeries(sym, quiet).then(function(){
+      delete seriesFetching[sym];
+      if (state.viewMode === "chart") renderMain();
+    });
+    return true;
   }
 
   // 이 티커를 실제로 들고 있으면 평단을 같이 그려서, 지금 가격이 내 평단
@@ -3222,77 +3260,104 @@
     });
   }
 
+  // 한 종목의 통계 + 차트 카드를 그린다. 고정 차트(TQQQ·SOXL)와 검색 차트가
+  // 같은 함수를 쓰므로 기간 선택은 종목별로 따로 기억한다.
+  function appendChartCard(sym, opts){
+    opts = opts || {};
+    var series = SERIES_CACHE[sym];
+    var card = document.createElement("div");
+    card.className = "card";
+    if (!series || !series.length){
+      card.innerHTML = "<h3>" + escapeHtml(sym) + "</h3>" +
+        '<div class="chart-empty">' + (seriesFetching[sym] ? "불러오는 중…" : "데이터가 없어요.") + '</div>';
+      mainArea.appendChild(card);
+      return;
+    }
+    var range = chartState.ranges[sym] || 120;
+    var view = series.slice(-range);
+    var avg = myAvgCostFor(sym);
+    var first = view[0].close, last = view[view.length-1].close;
+    var chg = last - first, chgPct = first ? (chg/first*100) : 0;
+    var hi = Math.max.apply(null, view.map(function(d){ return d.high; }));
+    var lo = Math.min.apply(null, view.map(function(d){ return d.low; }));
+    var hostId = "chartHost_" + sym.replace(/[^A-Za-z0-9]/g, "");
+
+    card.innerHTML =
+      '<div class="chart-card-head">' +
+        '<h3 style="margin:0;">' + escapeHtml(sym) + ' <span class="footnote">일봉</span></h3>' +
+        '<div class="chart-head-price"><b>' + fmtMoney(last) + '</b> ' +
+          '<span style="color:' + (chg>0?"var(--buy)":(chg<0?"var(--sell)":"var(--ink-soft)")) + '">' +
+            (chg>0?"+":"") + fmtMoney(chg) + ' (' + fmtPct(chgPct,2) + ')</span></div>' +
+      '</div>' +
+      '<div class="preset-row" style="margin:8px 0 10px;">' +
+        CHART_RANGES.map(function(r){
+          return '<button type="button" class="btn btn-sm preset-btn' + (r.key===range?" active":"") + '" data-sym="' + sym + '" data-r="' + r.key + '">' + r.label + '</button>';
+        }).join("") +
+        (opts.removable ? '<button type="button" class="btn btn-sm btn-ghost" id="chartClearBtn" style="margin-left:auto;">지우기</button>' : '') +
+      '</div>' +
+      '<div id="' + hostId + '"></div>' +
+      '<div class="chart-foot footnote">기간 최고 ' + fmtMoney(hi) + ' · 최저 ' + fmtMoney(lo) +
+        (avg ? (' · 내 평단 ' + fmtMoney(avg) + ' (평단대비 ' + fmtPct((last-avg)/avg*100, 2) + ')') : '') + '</div>';
+    mainArea.appendChild(card);
+    renderPriceChart(document.getElementById(hostId), view, avg);
+
+    Array.prototype.forEach.call(card.querySelectorAll(".preset-btn"), function(b){
+      b.addEventListener("click", function(){
+        chartState.ranges[b.getAttribute("data-sym")] = parseInt(b.getAttribute("data-r"), 10);
+        renderMain();   // 캐시된 데이터라 API 호출 없음
+      });
+    });
+    var clearBtn = document.getElementById("chartClearBtn");
+    if (clearBtn) clearBtn.addEventListener("click", function(){ chartState.symbol = ""; renderMain(); });
+  }
+
   function renderChartTab(){
     var head = document.createElement("div");
     head.innerHTML =
       '<div class="detail-head"><div><h2>차트</h2>' +
-      '<div class="sub">티커를 넣고 조회하면 일봉 차트를 그려요. 보유 중인 종목이면 내 평단도 함께 표시돼요.</div></div></div>';
+      '<div class="sub">TQQQ·SOXL은 항상 표시되고, 아래에서 다른 종목을 검색해 볼 수 있어요. 보유 중인 종목은 내 평단도 함께 그려요.</div></div></div>';
     mainArea.appendChild(head);
 
+    // 고정 차트는 조용히(배너 없이) 채운다.
+    CHART_FIXED.forEach(function(sym){ ensureSeries(sym, true); });
+    CHART_FIXED.forEach(function(sym){ appendChartCard(sym); });
+
     var owned = [];
-    function addOwned(t){ t = (t||"").toUpperCase(); if (t && owned.indexOf(t)===-1) owned.push(t); }
+    function addOwned(t){
+      t = (t||"").toUpperCase();
+      if (t && CHART_FIXED.indexOf(t) === -1 && owned.indexOf(t)===-1) owned.push(t);
+    }
     state.instances.forEach(function(i){ addOwned(i.ticker); });
     state.muInstances.forEach(function(m){ addOwned(m.ticker); });
     state.portfolio.holdings.forEach(function(h){ addOwned(h.ticker); });
 
-    var card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML =
+    var searchCard = document.createElement("div");
+    searchCard.className = "card";
+    searchCard.innerHTML =
+      "<h3>다른 종목 검색</h3>" +
       '<div class="form-grid" style="grid-template-columns:1fr auto;align-items:end;max-width:520px;">' +
-        field("티커", '<input id="chartSymbol" type="text" autocomplete="off" placeholder="예: TQQQ" value="' + escapeHtml(chartState.symbol) + '" style="text-transform:uppercase;" />') +
+        field("티커", '<input id="chartSymbol" type="text" autocomplete="off" placeholder="예: NVDA" value="' + escapeHtml(chartState.symbol) + '" style="text-transform:uppercase;" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="chartGoBtn" type="button">조회</button></div>' +
       '</div>' +
       (owned.length ? ('<div class="preset-row" style="margin-top:10px;">' +
         owned.map(function(t){ return '<button type="button" class="btn btn-sm chart-own" data-t="' + t + '">' + escapeHtml(t) + '</button>'; }).join("") +
         '</div>') : '') +
       (chartState.note ? ('<div class="fetch-note' + (chartState.note.isError ? " err" : "") + '" style="margin-top:12px;margin-bottom:0;"><span>' + escapeHtml(chartState.note.text) + '</span></div>') : '');
-    mainArea.appendChild(card);
+    mainArea.appendChild(searchCard);
 
     var sym = (chartState.symbol||"").toUpperCase();
-    var series = SERIES_CACHE[sym];
-    if (series && series.length){
-      var view = series.slice(-chartState.range);
-      var avg = myAvgCostFor(sym);
-      var first = view[0].close, last = view[view.length-1].close;
-      var chg = last - first, chgPct = first ? (chg/first*100) : 0;
-      var hi = Math.max.apply(null, view.map(function(d){ return d.high; }));
-      var lo = Math.min.apply(null, view.map(function(d){ return d.low; }));
-
-      var stats = document.createElement("div");
-      stats.className = "stat-strip";
-      stats.innerHTML =
-        stat(sym + " 현재가 (마지막 종가)", fmtMoney(last)) +
-        stat("기간 등락", fmtMoney(chg) + " (" + fmtPct(chgPct,2) + ")", false, chg>0?"var(--buy)":(chg<0?"var(--sell)":undefined)) +
-        stat("기간 최고", fmtMoney(hi)) +
-        stat("기간 최저", fmtMoney(lo)) +
-        (avg ? stat("내 평단", fmtMoney(avg)) : "") +
-        (avg ? stat("평단 대비", fmtPct((last-avg)/avg*100, 2), true, last>avg?"var(--buy)":(last<avg?"var(--sell)":undefined)) : "");
-      mainArea.appendChild(stats);
-
-      var chartCard = document.createElement("div");
-      chartCard.className = "card";
-      chartCard.innerHTML = "<h3>" + sym + " 일봉</h3>" +
-        '<div class="preset-row" style="margin-bottom:10px;">' +
-          CHART_RANGES.map(function(r){
-            return '<button type="button" class="btn btn-sm preset-btn' + (r.key===chartState.range?" active":"") + '" data-r="' + r.key + '">' + r.label + '</button>';
-          }).join("") +
-        '</div><div id="priceChartHost"></div>';
-      mainArea.appendChild(chartCard);
-      renderPriceChart(document.getElementById("priceChartHost"), view, avg);
-
-      Array.prototype.forEach.call(chartCard.querySelectorAll(".preset-btn"), function(b){
-        b.addEventListener("click", function(){
-          chartState.range = parseInt(b.getAttribute("data-r"), 10);
-          renderMain();   // 캐시된 데이터라 API 호출 없음
-        });
-      });
-    }
+    if (sym && CHART_FIXED.indexOf(sym) === -1 && SERIES_CACHE[sym]) appendChartCard(sym, { removable: true });
 
     function go(sym2){
       var v = (sym2 || document.getElementById("chartSymbol").value || "").trim().toUpperCase();
-      if (!v){ return; }
+      if (!v) return;
       chartState.symbol = v;
-      if (SERIES_CACHE[v]){ chartState.note = null; renderMain(); return; }
+      if (SERIES_CACHE[v] || loadSeriesLocal(v)){
+        if (!SERIES_CACHE[v]) SERIES_CACHE[v] = loadSeriesLocal(v);
+        chartState.note = null;
+        renderMain();
+        return;
+      }
       var btn = document.getElementById("chartGoBtn");
       btn.disabled = true; btn.textContent = "불러오는 중…";
       fetchTimeSeries(v).then(function(){ renderMain(); });
@@ -3301,7 +3366,7 @@
     document.getElementById("chartSymbol").addEventListener("keydown", function(e){
       if (e.key === "Enter") go();
     });
-    Array.prototype.forEach.call(card.querySelectorAll(".chart-own"), function(b){
+    Array.prototype.forEach.call(searchCard.querySelectorAll(".chart-own"), function(b){
       b.addEventListener("click", function(){ go(b.getAttribute("data-t")); });
     });
   }
