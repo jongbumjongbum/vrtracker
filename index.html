@@ -4909,7 +4909,24 @@
   });
 
   /* ---------------- init ---------------- */
-  window.addEventListener("resize", function(){ if (currentUserId) render(); });
+  // Charts are sized from their container, so a width change needs a repaint.
+  // Height-only changes (mobile keyboard, native date picker, scrollbar toggle)
+  // must NOT repaint, or they tear a half-filled form out from under the user.
+  var lastRenderWidth = window.innerWidth;
+  var resizeTimer = null;
+  window.addEventListener("resize", function(){
+    if (!currentUserId) return;
+    if (window.innerWidth === lastRenderWidth) return;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function(){
+      resizeTimer = null;
+      if (!currentUserId || window.innerWidth === lastRenderWidth) return;
+      lastRenderWidth = window.innerWidth;
+      var snap = snapshotFormValues();
+      render();
+      restoreFormValues(snap);
+    }, 180);
+  });
   wireAuthUI();
   wireApprovalUI();
   if (sb){
