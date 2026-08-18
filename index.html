@@ -545,19 +545,19 @@
       </div>
       <div class="field">
         <label>시작 V (목표기준값, $)</label>
-        <input id="ni_v" type="number" step="0.01" />
+        <input id="ni_v" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
       </div>
       <div class="field">
         <label>시작 Pool (현금, $)</label>
-        <input id="ni_pool" type="number" step="0.01" />
+        <input id="ni_pool" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
       </div>
       <div class="field">
         <label>시작 보유수량</label>
-        <input id="ni_qty" type="number" step="0.0001" value="0" />
+        <input id="ni_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" value="0" />
       </div>
       <div class="field">
         <label>시작가 ($)</label>
-        <input id="ni_price" type="number" step="0.01" />
+        <input id="ni_price" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
       </div>
       <div class="field">
         <label>시작 G값 <span class="hint">(기본: 적립·거치10 / 인출40)</span></label>
@@ -565,7 +565,7 @@
       </div>
       <div class="field">
         <label>최종 목표 금액 ($, 선택) <span class="hint">적립식→거치식→인출식 다 거친 최종 목표예요</span></label>
-        <input id="ni_goal" type="number" step="1" placeholder="선택 입력" />
+        <input id="ni_goal" type="number" autocomplete="off" inputmode="decimal" step="1" placeholder="선택 입력" />
       </div>
       <div class="field">
         <label>매수/매도 밴드 (%)</label>
@@ -573,7 +573,7 @@
       </div>
       <div class="field">
         <label>분할 수량 (주) <span class="hint">기본단위 1개씩 × 내 배수</span></label>
-        <input id="ni_tranche" type="number" step="1" min="1" value="1" />
+        <input id="ni_tranche" type="number" autocomplete="off" inputmode="decimal" step="1" min="1" value="1" />
       </div>
       <div class="field" style="grid-column:1/3;">
         <label>Pool 매수한도 방식 <span class="hint">만든 뒤에도 "Pool 한도 설정" 버튼으로 언제든 다시 바꿀 수 있어요</span></label>
@@ -582,13 +582,13 @@
           <option value="fixed">고정 비율 유지</option>
         </select>
       </div>
-      <div class="field"><label>시작한도 (%)</label><input id="ni_pl_base" type="number" step="1" value="75" /></div>
-      <div class="field"><label>감소폭 (%, 주기당)</label><input id="ni_pl_step" type="number" step="1" value="5" /></div>
-      <div class="field"><label>감소 주기 (일)</label><input id="ni_pl_stepdays" type="number" step="1" value="182.5" /></div>
-      <div class="field"><label>최소 한도 (%)</label><input id="ni_pl_floor" type="number" step="1" value="10" /></div>
+      <div class="field"><label>시작한도 (%)</label><input id="ni_pl_base" type="number" autocomplete="off" inputmode="decimal" step="1" value="75" /></div>
+      <div class="field"><label>감소폭 (%, 주기당)</label><input id="ni_pl_step" type="number" autocomplete="off" inputmode="decimal" step="1" value="5" /></div>
+      <div class="field"><label>감소 주기 (일)</label><input id="ni_pl_stepdays" type="number" autocomplete="off" inputmode="decimal" step="1" value="182.5" /></div>
+      <div class="field"><label>최소 한도 (%)</label><input id="ni_pl_floor" type="number" autocomplete="off" inputmode="decimal" step="1" value="10" /></div>
       <div class="field" style="grid-column:1/3;">
         <label>고정 매수한도 (%) <span class="hint">위에서 "고정 비율 유지" 선택했을 때만 쓰여요</span></label>
-        <input id="ni_pl_fixed" type="number" step="1" value="10" />
+        <input id="ni_pl_fixed" type="number" autocomplete="off" inputmode="decimal" step="1" value="10" />
       </div>
     </div>
     <div class="form-actions">
@@ -619,11 +619,11 @@
       </div>
       <div class="field">
         <label>원금 ($)</label>
-        <input id="mu_principal" type="number" step="0.01" placeholder="예: 20000" />
+        <input id="mu_principal" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 20000" />
       </div>
       <div class="field">
         <label>분할수 <span class="hint">20/30/40분할 추천 — 적을수록 공격적</span></label>
-        <input id="mu_split" type="number" step="1" min="2" value="40" />
+        <input id="mu_split" type="number" autocomplete="off" inputmode="decimal" step="1" min="2" value="40" />
       </div>
       <div class="field" style="grid-column:1/3;">
         <div class="footnote" style="border-top:1px solid var(--line);padding-top:10px;margin-top:2px;">
@@ -632,15 +632,15 @@
       </div>
       <div class="field">
         <label>현재 보유수량 <span class="hint">이미 들고 있는 주식 수</span></label>
-        <input id="mu_qty" type="number" step="1" min="0" placeholder="0" />
+        <input id="mu_qty" type="number" autocomplete="off" inputmode="decimal" step="1" min="0" placeholder="0" />
       </div>
       <div class="field">
         <label>현재 평단 ($) <span class="hint">증권사에 표시된 평균단가</span></label>
-        <input id="mu_avg" type="number" step="0.01" min="0" placeholder="0" />
+        <input id="mu_avg" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" placeholder="0" />
       </div>
       <div class="field" style="grid-column:1/3;">
         <label>진행회차 T <span class="hint">수량×평단으로 자동 계산됨 — 실제 진행회차를 알면 직접 고쳐도 돼요</span></label>
-        <input id="mu_T" type="number" step="0.01" min="0" placeholder="0" />
+        <input id="mu_T" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" placeholder="0" />
         <div class="footnote" id="mu_seedNote" style="margin-top:6px;"></div>
       </div>
     </div>
@@ -682,13 +682,13 @@
       <label class="type-opt"><span>고정 비율 유지</span><input type="radio" name="plMode" value="fixed" /></label>
     </div>
     <div id="plScheduleFields" class="form-grid" style="grid-template-columns:1fr 1fr;">
-      <div class="field"><label>시작 한도 (%)</label><input id="pl_base" type="number" step="1" /></div>
-      <div class="field"><label>감소폭 (%)</label><input id="pl_step" type="number" step="1" /></div>
-      <div class="field"><label>감소 주기 (일)</label><input id="pl_stepdays" type="number" step="1" /></div>
-      <div class="field"><label>최소 한도 (%)</label><input id="pl_floor" type="number" step="1" /></div>
+      <div class="field"><label>시작 한도 (%)</label><input id="pl_base" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
+      <div class="field"><label>감소폭 (%)</label><input id="pl_step" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
+      <div class="field"><label>감소 주기 (일)</label><input id="pl_stepdays" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
+      <div class="field"><label>최소 한도 (%)</label><input id="pl_floor" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
     </div>
     <div id="plFixedFields" class="form-grid hidden" style="grid-template-columns:1fr;">
-      <div class="field"><label>고정 매수한도 (%)</label><input id="pl_fixed" type="number" step="1" /></div>
+      <div class="field"><label>고정 매수한도 (%)</label><input id="pl_fixed" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
     </div>
     <div class="form-actions">
       <button class="btn btn-ghost" id="pl_cancel" type="button">취소</button>
@@ -753,10 +753,25 @@
   function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
   function localKey(userId){ return STORE_KEY + "_" + userId; }
 
+  // Every save stamps a client timestamp. Without it the loader can't tell
+  // whether the cloud copy or the local copy is the newer one, and it used to
+  // just assume the cloud was — so a save that never made it up (tab closed,
+  // network dropped, error swallowed) got silently destroyed on next open.
   function saveState(){
     if (!currentUserId) return;
+    state.updatedAt = new Date().toISOString();
     try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
     cloudSave(currentUserId, state);
+  }
+
+  var saveStatusTimer = null;
+  function setSaveStatus(text, isError){
+    var el = document.getElementById("saveStatus");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = isError ? "var(--sell)" : "var(--muted)";
+    if (saveStatusTimer) clearTimeout(saveStatusTimer);
+    if (text && !isError) saveStatusTimer = setTimeout(function(){ el.textContent = ""; }, 2000);
   }
 
   async function cloudLoad(userId){
@@ -769,10 +784,19 @@
   }
   async function cloudSave(userId, stateObj){
     if (!sb) return;
+    setSaveStatus("저장 중…");
     try {
       var res = await sb.from("vr_data").upsert({ user_id: userId, data: stateObj, updated_at: new Date().toISOString() });
-      if (res.error) console.error("cloud save error", res.error);
-    } catch(e){ console.error("cloud save failed", e); }
+      if (res.error){
+        console.error("cloud save error", res.error);
+        setSaveStatus("저장 실패 — 이 기기에만 있어요", true);
+      } else {
+        setSaveStatus("저장됨");
+      }
+    } catch(e){
+      console.error("cloud save failed", e);
+      setSaveStatus("저장 실패 — 이 기기에만 있어요", true);
+    }
   }
 
   function setAuthMsg(msg, isError){
@@ -782,6 +806,7 @@
     el.style.color = isError ? "var(--sell)" : "var(--ink-soft)";
   }
   function showAuthGate(){
+    setAuthInputsEnabled(true);
     document.getElementById("authGate").classList.remove("hidden");
     document.getElementById("pendingGate").classList.add("hidden");
     document.getElementById("appRoot").classList.add("hidden");
@@ -792,10 +817,20 @@
     document.getElementById("pendingGate").classList.remove("hidden");
     document.getElementById("appRoot").classList.add("hidden");
   }
+  // Password managers latch onto the page's login fields and then offer to
+  // autofill unrelated inputs (the 금액 box). Disabling the credential inputs
+  // once we're past the gate takes the page out of their scope.
+  function setAuthInputsEnabled(on){
+    ["auth_email","auth_password"].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.disabled = !on;
+    });
+  }
   function hideAuthGate(){
     document.getElementById("authGate").classList.add("hidden");
     document.getElementById("pendingGate").classList.add("hidden");
     document.getElementById("appRoot").classList.remove("hidden");
+    setAuthInputsEnabled(false);
   }
 
   function isAdminEmail(email){
@@ -929,13 +964,22 @@
       if (cached){ try { state = JSON.parse(cached); } catch(e){} }
       hideAuthGate();
       render();
-      fetchFxRate();
 
       var cloud = await cloudLoad(currentUserId);
       if (cloud){
-        state = cloud;
-        try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
-        render();
+        // Keep whichever copy is newer. Taking the cloud unconditionally threw
+        // away edits that were saved locally but never reached the server.
+        var localAt = state && state.updatedAt ? Date.parse(state.updatedAt) : 0;
+        var cloudAt = cloud.updatedAt ? Date.parse(cloud.updatedAt) : 0;
+        if (cached && localAt && localAt > cloudAt){
+          // Local is ahead — push it up instead of overwriting it.
+          cloudSave(currentUserId, state);
+          setSaveStatus("이 기기 기록이 더 최신이라 서버에 올렸어요");
+        } else {
+          state = cloud;
+          try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+          render();
+        }
       } else {
         // brand new account on this browser: offer to migrate any pre-login local data
         var legacy = null;
@@ -1261,9 +1305,67 @@
     });
   }
 
-  function pushCashLog(kind, amount, date, note){
-    state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "" });
+  function pushCashLog(kind, amount, date, note, tradeId){
+    state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "", tradeId: tradeId || null });
     state.portfolio.cashLog.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+  }
+
+  /* --- 직접입력 종목의 거래 수정/삭제 ---------------------------------------
+     qty/avgCost/realizedPL are running values produced by applying trades in
+     order, so a trade can't be edited in place — the ones after it would be
+     wrong. Instead: rewind every trade to recover the pre-trade seed, change
+     the list, then replay it forward. Reversal is exact because a buy's effect
+     on the average is invertible and a sell leaves the average untouched. */
+  function manualHoldingSeed(h){
+    var qty = h.qty || 0, avg = h.avgCost || 0, realized = h.realizedPL || 0;
+    (h.trades || []).slice().reverse().forEach(function(t){
+      if (t.type === "buy"){
+        var costBefore = qty*avg - t.qty*t.price;
+        qty = qty - t.qty;
+        avg = qty > 0 ? costBefore/qty : 0;
+      } else {
+        qty = qty + t.qty;          // sells don't move the average
+        realized -= (t.gain || 0);
+      }
+    });
+    return { qty: qty, avgCost: avg, realizedPL: realized };
+  }
+  // Replays h.trades from `seed`, rewriting h and returning the net cash effect
+  // of the whole trade list (negative = money spent).
+  function replayManualHolding(h, seed){
+    var qty = seed.qty, cost = seed.qty * seed.avgCost, realized = seed.realizedPL, cash = 0;
+    (h.trades || []).forEach(function(t){
+      if (t.type === "buy"){
+        cost += t.qty * t.price;
+        qty += t.qty;
+        cash -= t.qty * t.price;
+      } else {
+        var avg = qty > 0 ? cost/qty : 0;
+        var sq = Math.min(t.qty, qty);
+        t.qty = sq;
+        t.gain = round2(sq * (t.price - avg));
+        realized += t.gain;
+        qty -= sq;
+        cost = avg * Math.max(0, qty);
+        cash += sq * t.price;
+      }
+    });
+    h.qty = qty;
+    h.avgCost = qty > 0 ? cost/qty : 0;
+    h.realizedPL = round2(realized);
+    return round2(cash);
+  }
+  // Applies a mutation to one holding's trade list and keeps 예수금 in step by
+  // moving it by the difference between the old and new net cash effect.
+  function mutateManualTrades(h, mutate){
+    var seed = manualHoldingSeed(h);
+    var before = replayManualHolding(h, seed);
+    mutate(h.trades);
+    var after = replayManualHolding(h, seed);
+    state.portfolio.extraCash = round2((state.portfolio.extraCash || 0) + (after - before));
+  }
+  function removeCashLogForTrade(tradeId){
+    state.portfolio.cashLog = state.portfolio.cashLog.filter(function(e){ return e.tradeId !== tradeId; });
   }
 
   function aggregateVrHoldingsByTicker(){
@@ -1405,7 +1507,7 @@
       if (json && json.rates && json.rates.KRW){
         state.fx = { usdkrw: json.rates.KRW, updatedAt: new Date().toISOString() };
         saveState();
-        if (state.viewMode === "portfolio") renderMain();
+        if (state.viewMode === "portfolio") renderMainPreservingInput();
       }
     } catch(e){ console.error("fx fetch failed", e); }
   }
@@ -1429,7 +1531,13 @@
     return c ? c.price : null;
   }
 
-  async function fetchLivePrices(tickers){
+  // Quotes are fetched ONLY when the user presses 시세 새로고침. Auto-fetching
+  // on render meant every tab switch and every background re-render spent API
+  // credits — the free tier's 800/day vanished without the user ever asking
+  // for a refresh. Cached prices are persisted in state, so they survive
+  // reloads and stay usable until the next explicit refresh.
+  async function fetchLivePrices(tickers, manual){
+    if (!manual) return false;
     var now = Date.now();
     var uniq = [];
     tickers.forEach(function(t){ if (t && uniq.indexOf(t)===-1) uniq.push(t); });
@@ -1476,7 +1584,29 @@
       console.error("live price fetch failed", e);
       need.forEach(markFailed);
     }
+    if (changed) persistPriceCache();
     return changed;
+  }
+
+  // Since quotes are only fetched on demand now, the last fetched set has to
+  // outlive a page reload — otherwise reopening the app would show no prices
+  // at all until the user spent another API call.
+  function persistPriceCache(){
+    if (!state.portfolio) return;
+    var out = {};
+    Object.keys(LIVE_PRICE_CACHE).forEach(function(t){
+      var c = LIVE_PRICE_CACHE[t];
+      if (c && c.price != null) out[t] = { price: c.price, ts: c.ts };
+    });
+    state.portfolio.priceCache = out;
+    saveState();
+  }
+  function hydratePriceCache(){
+    var pc = state.portfolio && state.portfolio.priceCache;
+    if (!pc) return;
+    Object.keys(pc).forEach(function(t){
+      if (LIVE_PRICE_CACHE[t] == null) LIVE_PRICE_CACHE[t] = { price: pc[t].price, ts: pc[t].ts };
+    });
   }
 
   function fmtCurrencyDigits(usdAmount, digits){
@@ -1574,6 +1704,7 @@
 
   function render(){
     normalizeState();
+    hydratePriceCache();
     renderSidebar();
     renderMain();
   }
@@ -1652,6 +1783,40 @@
   function pad(n){ return n<10 ? "0"+n : ""+n; }
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 
+  // Background price/FX fetches call renderMain(), which rebuilds every form
+  // from scratch — that wiped whatever the user was in the middle of typing
+  // (the reported "날짜 고르면 수량·금액이 지워지고 매도가 매수로 돌아감").
+  // Snapshot what's in the form and put it back after the rebuild.
+  function snapshotFormValues(){
+    var out = {};
+    Array.prototype.forEach.call(mainArea.querySelectorAll("input[id], select[id]"), function(el){
+      if (!el.id) return;
+      if (el.type === "checkbox" || el.type === "radio") out[el.id] = { checked: el.checked };
+      else out[el.id] = { value: el.value };
+    });
+    return { values: out, activeId: (document.activeElement && document.activeElement.id) || null };
+  }
+  function restoreFormValues(snap){
+    if (!snap) return;
+    Object.keys(snap.values).forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el || !mainArea.contains(el)) return;
+      var v = snap.values[id];
+      if (v.checked !== undefined) el.checked = v.checked;
+      else if (v.value !== undefined && v.value !== "") el.value = v.value;
+    });
+    if (snap.activeId){
+      var a = document.getElementById(snap.activeId);
+      if (a && mainArea.contains(a)) { try { a.focus({ preventScroll: true }); } catch(e){ a.focus(); } }
+    }
+  }
+  // Re-render triggered by something other than the user (price/FX arriving).
+  function renderMainPreservingInput(){
+    var snap = snapshotFormValues();
+    renderMain();
+    restoreFormValues(snap);
+  }
+
   function renderMain(){
     mainArea.innerHTML = "";
     activeEntryApi = null;
@@ -1685,9 +1850,6 @@
     var band = inst.band;
     var buyBand = round2(last.Vnext * band.low);
     var sellBand = round2(last.Vnext * band.high);
-    fetchLivePrices([inst.ticker]).then(function(changed){
-      if (changed && state.viewMode === "vr" && state.selectedId === inst.id) renderMain();
-    });
     var tot = totalValue(last);
     var poolRatio = tot > 0 ? (last.Pool/tot*100) : 0;
 
@@ -1762,7 +1924,7 @@
       stat("평가금 E", fmtMoney0(refE)) +
       stat("Pool (현금)", fmtMoney0(last.Pool)) +
       '<div class="stat"><div class="label">G값 (직접 수정 가능)</div>' +
-        '<input id="gManualInput" type="number" step="1" class="cell-input" style="width:100%;" value="' + G + '" /></div>' +
+        '<input id="gManualInput" type="number" autocomplete="off" inputmode="decimal" step="1" class="cell-input" style="width:100%;" value="' + G + '" /></div>' +
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
       stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
       stat("보유수량", (last.qty || 0).toLocaleString() + "주", true) +
@@ -1772,7 +1934,7 @@
       stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
       stat("실현손익 (지금까지 매도로 확정된 손익)", fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
       '<div class="stat"><div class="label">실제평단 (직접입력, 이후 사이클 체결이 자동 반영돼요)</div>' +
-        '<input id="realAvgCostInput" type="number" step="0.01" class="cell-input" style="width:100%;" ' +
+        '<input id="realAvgCostInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
         'value="' + (realAvg != null ? realAvg : "") + '" placeholder="예: 45.20" /></div>' +
       stat("손익 (실제평단 기준)", pnlStr(realProfit, realProfitPct), false, pnlColor(realProfit));
     mainArea.appendChild(stats);
@@ -1817,7 +1979,7 @@
         '<div class="footnote">아래 매수표가 전부 체결되면 ' + fmtMoney0(plannedSpend) + ' (한도의 ' + spendPct.toFixed(0) + '%) 사용해요.</div>' +
       '</div>' +
       '<div class="field" style="max-width:220px;margin:12px 0;"><label>분할 수량 (주, 직접입력)</label>' +
-        '<input id="trancheSizeInput" type="number" step="1" min="1" class="cell-input" style="width:100%;" value="' + (inst.trancheSize || DEFAULT_TRANCHE_SIZE) + '" /></div>' +
+        '<input id="trancheSizeInput" type="number" autocomplete="off" inputmode="decimal" step="1" min="1" class="cell-input" style="width:100%;" value="' + (inst.trancheSize || DEFAULT_TRANCHE_SIZE) + '" /></div>' +
       renderOrderTable(inst, last, buyBand, sellBand, limit);
     mainArea.appendChild(orderCard);
 
@@ -1835,12 +1997,12 @@
         '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
           field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
-          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" step="0.01" placeholder="예: 74.47" />') +
+          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 74.47" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
-          field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" step="0.01" value="0" />') +
-          field("SPY 종가 (선택)", '<input id="cy_spy" type="number" step="0.01" placeholder="비교차트용" />') +
-          field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" step="0.01" placeholder="비교차트용" />') +
+          field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.01" value="0" />') +
+          field("SPY 종가 (선택)", '<input id="cy_spy" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="비교차트용" />') +
+          field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="비교차트용" />') +
         '</div>' +
         '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
         '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 마감하고 기록하기</button></div>';
@@ -1955,8 +2117,8 @@
               '<option value="buy"' + (f.type==="buy"?" selected":"") + '>매수</option>' +
               '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
             '</select></td>' +
-            '<td class="num" data-label="수량"><input type="number" step="0.0001" class="cell-input fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
-            '<td class="num" data-label="가격"><input type="number" step="0.01" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
+            '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
+            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
             '<td><button type="button" class="btn btn-sm btn-ghost btn-danger fill-del">삭제</button></td>' +
             '</tr>';
         }).join("") + '</tbody></table></div>';
@@ -2033,11 +2195,6 @@
   // doesn't mean opening each one to find out what to place.
   function renderMuTodayGuide(){
     if (state.muInstances.length < 1) return;
-    // The guide shows every instance, so every instance's ticker needs a quote
-    // — fetching only the selected one left the others unpriced.
-    fetchLivePrices(state.muInstances.map(function(m){ return m.ticker; })).then(function(changed){
-      if (changed && state.viewMode === "mu") renderMain();
-    });
     var card = document.createElement("div");
     card.className = "card";
     var cards = state.muInstances.map(function(m){
@@ -2113,9 +2270,6 @@
     if (histIdx != null && histIdx >= inst.days.length-1){ delete historyView[inst.id]; histIdx = null; }
     var viewingPast = (histIdx != null);
     var last = viewingPast ? inst.days[histIdx] : muLastState(inst);
-    fetchLivePrices([inst.ticker]).then(function(changed){
-      if (changed && state.viewMode === "mu" && state.muSelectedId === inst.id) renderMain();
-    });
 
     var head = document.createElement("div");
     head.innerHTML =
@@ -2197,7 +2351,7 @@
                 '보다 위에 큰수매수로 걸어요.') +
             '<div class="field" style="max-width:220px;margin-top:8px;">' +
               '<label>기준가 직접 입력 ($)</label>' +
-              '<input id="muRefPriceInput" type="number" step="0.01" min="0" class="cell-input" style="width:100%;" ' +
+              '<input id="muRefPriceInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" class="cell-input" style="width:100%;" ' +
                 'value="' + (inst.manualRefPrice || "") + '" placeholder="예: 22.10" />' +
             '</div>' +
           '</div>')
@@ -2313,7 +2467,7 @@
       '<div class="card-desc">오늘 종가와 실제 체결내역을 입력하고, 오늘 T가 어떻게 진행됐는지 골라주세요. 매매가 없었으면 체결내역은 비워두세요.</div>' +
       '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
         field("날짜", '<input id="mu_e_date" type="date" value="' + todayStr() + '" />') +
-        field(inst.ticker + " 종가 ($)", '<input id="mu_e_close" type="number" step="0.01" placeholder="종가" />') +
+        field(inst.ticker + " 종가 ($)", '<input id="mu_e_close" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="종가" />') +
       '</div>' +
       '<div style="margin-top:14px;">' +
         '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">체결내역 <span class="hint">매매가 있었으면 한 줄씩 추가하세요</span></label>' +
@@ -2326,7 +2480,7 @@
         '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;">' +
           '<input type="checkbox" id="mu_e_toverride_on" /> T를 직접 지정할게요 <span class="hint">(자동 계산이 실제와 다를 때만)</span>' +
         '</label>' +
-        '<input id="mu_e_toverride" type="number" step="0.01" min="0" class="cell-input" style="width:160px;margin-top:6px;display:none;" />' +
+        '<input id="mu_e_toverride" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" class="cell-input" style="width:160px;margin-top:6px;display:none;" />' +
       '</div>' +
       (last.mode === "general"
         ? '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;"><input type="checkbox" id="mu_e_exhausted" /> 오늘부로 매수 1개도 불가능해졌어요 (소진 → 리버스모드 전환)</label>'
@@ -2352,8 +2506,8 @@
               '<option value="buy"' + (f.type==="buy"?" selected":"") + '>매수</option>' +
               '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
             '</select></td>' +
-            '<td class="num" data-label="수량"><input type="number" step="1" class="cell-input mu-fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
-            '<td class="num" data-label="가격"><input type="number" step="0.01" class="cell-input mu-fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
+            '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="1" class="cell-input mu-fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
+            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input mu-fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
             '<td><button type="button" class="btn btn-sm btn-ghost btn-danger mu-fill-del">삭제</button></td>' +
             '</tr>';
         }).join("") + '</tbody></table></div>';
@@ -2483,9 +2637,6 @@
     vrHoldings.forEach(function(h){ if (allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
     muHoldings.forEach(function(h){ if (allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
     manual.forEach(function(h){ if (h.ticker && allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
-    fetchLivePrices(allTickers).then(function(changed){
-      if (changed && state.viewMode === "portfolio") renderMain();
-    });
 
     var vrTotal = 0, vrInvestedReal = 0, vrValueReal = 0;
     vrHoldings.forEach(function(h){
@@ -2583,7 +2734,7 @@
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
       stat("└ 그외 예수금 (직접입력+무매 잔금)", fmtCurrency(otherCashTotal)) +
       '<div class="stat"><div class="label">그외 예수금 직접 조정 (직접입력분만)</div>' +
-        '<input id="extraCashInput" type="number" step="0.01" class="cell-input" style="width:100%;" ' +
+        '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
         'value="' + extraCash + '" placeholder="예: 500" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
       stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit)) +
@@ -2612,7 +2763,7 @@
       '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. 아래 "직접 추가한 종목"에서 매수/매도를 기록해도 여기 자동으로 남아요.</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,1fr);align-items:end;">' +
         field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
-        field("금액 ($)", '<input id="cashLogAmount" type="number" step="0.01" placeholder="예: 500" />') +
+        field("금액 ($)", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 500" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
       '</div>' +
       (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
@@ -2723,7 +2874,9 @@
         '<td class="num" data-label="수량">' + x.t.qty + '</td>' +
         '<td class="num" data-label="가격">' + fmtMoney(x.t.price) + '</td>' +
         '<td class="num" data-label="금액">' + fmtMoney0(amount) + '</td>' +
-        '<td class="num" data-label="실현손익">' + gainCell + '</td></tr>';
+        '<td class="num" data-label="실현손익">' + gainCell + '</td>' +
+        '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost trade-edit" data-h="' + x.h.id + '" data-t="' + x.t.id + '">수정</button> ' +
+          '<button type="button" class="btn btn-sm btn-ghost btn-danger trade-del" data-h="' + x.h.id + '" data-t="' + x.t.id + '">삭제</button></td></tr>';
     }).join("");
     manCard.innerHTML = "<h3>직접 추가한 종목 (그외에 포함)</h3>" +
       '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.<br>' +
@@ -2736,16 +2889,74 @@
         ? ('<div class="form-grid" style="grid-template-columns:repeat(5,1fr);align-items:end;">' +
             field("종목", '<select id="tr_ticker">' + tickerOptions + '</select>') +
             field("구분", '<select id="tr_type"><option value="buy">매수</option><option value="sell">매도</option></select>') +
-            field("수량", '<input id="tr_qty" type="number" step="0.0001" placeholder="예: 10" />') +
-            field("가격 ($)", '<input id="tr_price" type="number" step="0.01" placeholder="예: 230.5" />') +
+            field("수량", '<input id="tr_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 10" />') +
+            field("가격 ($)", '<input id="tr_price" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 230.5" />') +
             field("날짜", '<input id="tr_date" type="date" value="' + todayStr() + '" />') +
           '</div>' +
           '<div class="form-actions"><button class="btn btn-primary" id="tradeSubmitBtn" type="button">기록하기</button></div>')
         : '<div class="chart-empty">먼저 위에서 종목을 추가하고 티커를 입력하면 여기서 매매를 기록할 수 있어요.</div>') +
-      (tradeRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>종목</th><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">금액</th><th class="num">실현손익</th></tr></thead><tbody>' + tradeRows + '</tbody></table></div>')
+      (tradeRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>종목</th><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">금액</th><th class="num">실현손익</th><th class="col-action"></th></tr></thead><tbody>' + tradeRows + '</tbody></table></div>')
         : '');
     mainArea.appendChild(manCard);
     renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
+
+    // Editing/deleting a past trade rewinds and replays the whole list for that
+    // holding, so 수량·평단·실현손익·예수금 all land where they'd be if the
+    // corrected trade had been the one entered originally.
+    function findTrade(hId, tId){
+      var h = manual.find(function(x){ return x.id === hId; });
+      if (!h) return null;
+      var t = (h.trades||[]).find(function(x){ return x.id === tId; });
+      return t ? { h: h, t: t } : null;
+    }
+    Array.prototype.forEach.call(manCard.querySelectorAll(".trade-del"), function(btn){
+      btn.addEventListener("click", function(){
+        var f = findTrade(btn.getAttribute("data-h"), btn.getAttribute("data-t"));
+        if (!f) return;
+        var label = fmtDate(f.t.date) + " " + f.h.ticker + " " + (f.t.type==="buy"?"매수":"매도") + " " + f.t.qty + "주 @ " + fmtMoney(f.t.price);
+        if (!confirm(label + "\n\n이 거래를 삭제할까요?\n수량·평단·실현손익과 예수금이 이 거래가 없었던 상태로 다시 계산돼요.")) return;
+        mutateManualTrades(f.h, function(trades){
+          var i = trades.findIndex(function(x){ return x.id === f.t.id; });
+          if (i !== -1) trades.splice(i, 1);
+        });
+        removeCashLogForTrade(f.t.id);
+        saveState();
+        renderMain();
+      });
+    });
+    Array.prototype.forEach.call(manCard.querySelectorAll(".trade-edit"), function(btn){
+      btn.addEventListener("click", function(){
+        var f = findTrade(btn.getAttribute("data-h"), btn.getAttribute("data-t"));
+        if (!f) return;
+        var qs = prompt("수량", String(f.t.qty));
+        if (qs === null) return;
+        var ps = prompt("가격 ($)", String(f.t.price));
+        if (ps === null) return;
+        var ds = prompt("날짜 (YYYY-MM-DD)", f.t.date);
+        if (ds === null) return;
+        var ts = prompt('구분: "매수" 또는 "매도"', f.t.type === "buy" ? "매수" : "매도");
+        if (ts === null) return;
+        var nq = parseFloat(qs), np = parseFloat(ps);
+        var nt = (ts.trim() === "매도" || ts.trim().toLowerCase() === "sell") ? "sell" : "buy";
+        if (isNaN(nq) || nq <= 0 || isNaN(np) || np <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(ds.trim())){
+          alert("수량·가격은 0보다 큰 숫자, 날짜는 YYYY-MM-DD 형식이어야 해요.");
+          return;
+        }
+        mutateManualTrades(f.h, function(trades){
+          var t = trades.find(function(x){ return x.id === f.t.id; });
+          t.qty = nq; t.price = np; t.date = ds.trim(); t.type = nt;
+          trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+        });
+        removeCashLogForTrade(f.t.id);
+        var rec = (f.h.trades||[]).find(function(x){ return x.id === f.t.id; });
+        if (rec){
+          if (rec.type === "buy") pushCashLog("매수", -(rec.qty*rec.price), rec.date, f.h.ticker + " " + rec.qty + "주 매수", rec.id);
+          else pushCashLog("매도", rec.qty*rec.price, rec.date, f.h.ticker + " " + rec.qty + "주 매도 (실현손익 " + fmtMoney0(rec.gain||0) + ")", rec.id);
+        }
+        saveState();
+        renderMain();
+      });
+    });
 
     if (tradeableHoldings.length){
       document.getElementById("tradeSubmitBtn").addEventListener("click", function(){
@@ -2757,26 +2968,19 @@
         if (isNaN(qty) || qty <= 0 || isNaN(price) || price <= 0){ alert("수량과 가격을 입력해주세요."); return; }
         var h = manual.find(function(x){ return x.id === hId; });
         if (!h) return;
+        if (type === "sell" && (h.qty||0) <= 0){ alert("팔 수량이 없어요."); return; }
+        var tradeId = uid();
+        mutateManualTrades(h, function(trades){
+          trades.push({ id: tradeId, date: date, type: type, qty: qty, price: price });
+          trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+        });
+        var rec = h.trades.find(function(t){ return t.id === tradeId; });
+        h.currentPrice = price;
         if (type === "buy"){
-          var newQty = (h.qty||0) + qty;
-          var newCost = (h.qty||0)*(h.avgCost||0) + qty*price;
-          h.avgCost = newQty > 0 ? newCost/newQty : 0;
-          h.qty = newQty;
-          h.currentPrice = price;
-          state.portfolio.extraCash = (state.portfolio.extraCash||0) - qty*price;
-          pushCashLog("매수", -(qty*price), date, h.ticker + " " + qty + "주 매수");
-          h.trades.push({ id: uid(), date: date, type: "buy", qty: qty, price: price });
+          pushCashLog("매수", -(rec.qty*rec.price), date, h.ticker + " " + rec.qty + "주 매수", tradeId);
         } else {
-          var sellQty = Math.min(qty, h.qty||0);
-          if (sellQty <= 0){ alert("팔 수량이 없어요."); return; }
-          var gain = sellQty * (price - (h.avgCost||0));
-          h.realizedPL = (h.realizedPL||0) + gain;
-          h.qty = (h.qty||0) - sellQty;
-          h.currentPrice = price;
-          state.portfolio.extraCash = (state.portfolio.extraCash||0) + sellQty*price;
-          pushCashLog("매도", sellQty*price, date, h.ticker + " " + sellQty + "주 매도 (실현손익 " + fmtMoney0(gain) + ")");
-          h.trades.push({ id: uid(), date: date, type: "sell", qty: sellQty, price: price, gain: gain });
-          if (sellQty < qty){ alert("보유수량(" + (h.qty+sellQty) + "주)보다 많이 입력해서 " + sellQty + "주만 매도로 기록했어요."); }
+          pushCashLog("매도", rec.qty*rec.price, date, h.ticker + " " + rec.qty + "주 매도 (실현손익 " + fmtMoney0(rec.gain||0) + ")", tradeId);
+          if (rec.qty < qty){ alert("보유수량보다 많이 입력해서 " + rec.qty + "주만 매도로 기록했어요."); }
         }
         saveState();
         renderMain();
@@ -2793,7 +2997,7 @@
     document.getElementById("fxRefreshBtn").addEventListener("click", function(){ fetchFxRate(true); });
     document.getElementById("priceRefreshBtn").addEventListener("click", function(){
       allTickers.forEach(function(t){ delete LIVE_PRICE_CACHE[t]; });
-      renderMain();
+      fetchLivePrices(allTickers, true).then(function(){ renderMainPreservingInput(); });
     });
     document.getElementById("addHoldingBtn").addEventListener("click", function(){
       state.portfolio.holdings.push({ id: uid(), ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
@@ -3155,13 +3359,13 @@
       var profitCls = profit > 0 ? "var(--buy)" : (profit < 0 ? "var(--sell)" : "var(--ink-soft)");
       var priceCell = live != null
         ? ('<div class="num" style="padding:5px 7px;">' + fmtMoney(live) + ' <span class="footnote" style="display:inline;">실시간</span></div>')
-        : ('<input type="number" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
+        : ('<input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
       var realizedPL = h.realizedPL || 0;
       var realizedCls = realizedPL > 0 ? "var(--buy)" : (realizedPL < 0 ? "var(--sell)" : "var(--ink-soft)");
       return '<tr data-id="' + h.id + '">' +
         '<td data-label="티커"><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
-        '<td class="num" data-label="수량"><input type="number" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
-        '<td class="num" data-label="매입평균가"><input type="number" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
+        '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
+        '<td class="num" data-label="매입평균가"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
         '<td class="num" data-label="현재가">' + priceCell + '</td>' +
         '<td class="num" data-label="평가금">' + fmtCurrency(value) + '</td>' +
         '<td class="num" data-label="미실현 수익금" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
@@ -3243,7 +3447,7 @@
     return '<div class="metric-box">' +
       '<div class="m-label">인출식 전환 시 예상 연 인출률</div>' +
       '<div class="withdraw-check-row">' +
-        '<div class="field"><label style="font-size:11px;">희망 월 인출액 ($)</label><input id="wCalcInput" type="number" step="1" placeholder="예: 300" /></div>' +
+        '<div class="field"><label style="font-size:11px;">희망 월 인출액 ($)</label><input id="wCalcInput" type="number" autocomplete="off" inputmode="decimal" step="1" placeholder="예: 300" /></div>' +
         '<div class="m-value num" id="wCalcOut" style="min-width:70px;">–</div>' +
       '</div>' +
       '<div class="m-note" id="wCalcNote">참고용 계산이에요. 일반적으로 알려진 안전인출률(연 3.5~4%대)보다 높으면 지속가능성을 다시 점검해보세요. 투자자문이 아니라 구조적 참고치예요.</div>' +
