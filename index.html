@@ -195,6 +195,24 @@
   }
   .sidebar-backdrop { display: none; }
 
+  /* 그래프가 요약이고 표는 숫자를 정확히 봐야 할 때만 필요해서, 손익 탭의 긴
+     표들은 이 토글 안에 접어둔다. */
+  details.fold { margin-top: 12px; }
+  details.fold > summary {
+    cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; font-weight: 600; color: var(--ink-soft);
+    border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px;
+    background: var(--panel-2); user-select: none;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before { content: "\25B8"; font-size: 12px; line-height: 1; color: var(--ink-soft); }
+  details.fold[open] > summary::before { content: "\25BE"; }
+  details.fold > .table-wrap, details.fold > .footnote { margin-top: 12px; }
+
+  /* Summary line for a stacked mobile row. The wide table is fine on a desktop,
+     so this cell only exists under 860px. */
+  td.row-head { display: none; }
+
   @media (max-width: 860px) {
     .app { grid-template-columns: 1fr; }
     .mobile-topbar {
@@ -264,6 +282,28 @@
       position: static; box-shadow: none; background: transparent;
     }
     table.stack-mobile .cell-input { width: auto; max-width: 130px; }
+
+    /* 직접 추가한 종목 / 매매 기록: one stacked card per row was 8-9 lines
+       tall, so a handful of rows filled the screen. Collapse each to its
+       summary line and open it on tap. */
+    table.collapsible-rows tr:not(.is-open) td:not(.row-head) { display: none; }
+    table.collapsible-rows tr { padding: 6px 10px; }
+    table.collapsible-rows td.row-head {
+      display: flex; align-items: center; gap: 8px; text-align: left;
+      padding: 5px 0; cursor: pointer; font-weight: 600; font-size: 13px;
+    }
+    table.collapsible-rows td.row-head::before { content: none; }
+    table.collapsible-rows tr.is-open td.row-head {
+      border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px;
+    }
+    td.row-head .rh-main { flex: 0 0 auto; }
+    td.row-head .rh-sub {
+      flex: 1 1 auto; text-align: right; color: var(--ink-soft);
+      font-weight: 500; font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    td.row-head .rh-chev { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+    tr.is-open td.row-head .rh-chev { transform: rotate(180deg); }
   }
 
   .sidebar {
@@ -536,7 +576,7 @@
     <div class="form-grid" style="grid-template-columns:1fr 1fr;">
       <div class="field" style="grid-column:1/3;">
         <label>이름</label>
-        <input id="ni_name" type="text" placeholder="예: VR 7기 적립식" />
+        <input id="ni_name" type="text" autocomplete="off" placeholder="예: VR 7기 적립식" />
       </div>
       <div class="field">
         <label>운용 방식</label>
@@ -548,23 +588,23 @@
       </div>
       <div class="field">
         <label>티커</label>
-        <input id="ni_ticker" type="text" value="TQQQ" />
+        <input id="ni_ticker" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" value="TQQQ" />
       </div>
       <div class="field">
         <label>시작일</label>
-        <input id="ni_date" type="date" />
+        <input id="ni_date" type="date" autocomplete="off" />
       </div>
       <div class="field">
         <label>사이클 길이(일)</label>
-        <input id="ni_cycledays" type="number" value="14" />
+        <input id="ni_cycledays" type="number" autocomplete="off" inputmode="decimal" value="14" />
       </div>
       <div class="field">
         <label>시작 V (목표기준값, $)</label>
-        <input id="ni_v" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
+        <input id="ni_v" type="number" autocomplete="off" inputmode="decimal" step="0.0001" />
       </div>
       <div class="field">
         <label>시작 Pool (현금, $)</label>
-        <input id="ni_pool" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
+        <input id="ni_pool" type="number" autocomplete="off" inputmode="decimal" step="0.0001" />
       </div>
       <div class="field">
         <label>시작 보유수량</label>
@@ -572,11 +612,11 @@
       </div>
       <div class="field">
         <label>시작가 ($)</label>
-        <input id="ni_price" type="number" autocomplete="off" inputmode="decimal" step="0.01" />
+        <input id="ni_price" type="number" autocomplete="off" inputmode="decimal" step="0.0001" />
       </div>
       <div class="field">
         <label>시작 G값 <span class="hint">(기본: 적립·거치10 / 인출40)</span></label>
-        <input id="ni_g" type="number" />
+        <input id="ni_g" type="number" autocomplete="off" inputmode="decimal" />
       </div>
       <div class="field">
         <label>최종 목표 금액 ($, 선택) <span class="hint">적립식→거치식→인출식 다 거친 최종 목표예요</span></label>
@@ -584,7 +624,7 @@
       </div>
       <div class="field">
         <label>매수/매도 밴드 (%)</label>
-        <input id="ni_band" type="number" value="15" />
+        <input id="ni_band" type="number" autocomplete="off" inputmode="decimal" value="15" />
       </div>
       <div class="field">
         <label>분할 수량 (주) <span class="hint">기본단위 1개씩 × 내 배수</span></label>
@@ -619,7 +659,7 @@
     <div class="form-grid" style="grid-template-columns:1fr 1fr;">
       <div class="field" style="grid-column:1/3;">
         <label>이름</label>
-        <input id="mu_name" type="text" placeholder="예: 무매 1기 TQQQ" />
+        <input id="mu_name" type="text" autocomplete="off" placeholder="예: 무매 1기 TQQQ" />
       </div>
       <div class="field">
         <label>종목</label>
@@ -630,11 +670,11 @@
       </div>
       <div class="field">
         <label>시작일</label>
-        <input id="mu_date" type="date" />
+        <input id="mu_date" type="date" autocomplete="off" />
       </div>
       <div class="field">
         <label>원금 ($)</label>
-        <input id="mu_principal" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 20000" />
+        <input id="mu_principal" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 20000" />
       </div>
       <div class="field">
         <label>분할수 <span class="hint">20/30/40분할 추천 — 적을수록 공격적</span></label>
@@ -651,11 +691,11 @@
       </div>
       <div class="field">
         <label>현재 평단 ($) <span class="hint">증권사에 표시된 평균단가</span></label>
-        <input id="mu_avg" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" placeholder="0" />
+        <input id="mu_avg" type="number" autocomplete="off" inputmode="decimal" step="0.0001" min="0" placeholder="0" />
       </div>
       <div class="field" style="grid-column:1/3;">
         <label>진행회차 T <span class="hint">수량×평단으로 자동 계산됨 — 실제 진행회차를 알면 직접 고쳐도 돼요</span></label>
-        <input id="mu_T" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" placeholder="0" />
+        <input id="mu_T" type="number" autocomplete="off" inputmode="decimal" step="0.0001" min="0" placeholder="0" />
         <div class="footnote" id="mu_seedNote" style="margin-top:6px;"></div>
       </div>
     </div>
@@ -674,11 +714,11 @@
     <div class="form-grid" style="grid-template-columns:1fr 1fr;">
       <div class="field">
         <label>전환일</label>
-        <input id="sw_date" type="date" />
+        <input id="sw_date" type="date" autocomplete="off" />
       </div>
       <div class="field">
         <label>새 시작 G값</label>
-        <input id="sw_g" type="number" />
+        <input id="sw_g" type="number" autocomplete="off" inputmode="decimal" />
       </div>
     </div>
     <div class="form-actions">
@@ -761,6 +801,12 @@
   var STORE_KEY = "vr_tracker_state_v1";
   var state = { instances: [], selectedId: null };
   var currentUserId = null;
+  // Supabase re-fires SIGNED_IN / TOKEN_REFRESHED every time the tab regains
+  // visibility (switching apps on a phone does exactly that). Booting again on
+  // that event rebuilt mainArea, which wiped whatever was half-typed and threw
+  // the page back to the top. Once we're up for a user, later events for that
+  // same user are no-ops.
+  var appReady = false;
   var sb = (window.supabase && window.supabase.createClient)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
@@ -833,12 +879,33 @@
     document.getElementById("appRoot").classList.add("hidden");
   }
   // Password managers latch onto the page's login fields and then offer to
-  // autofill unrelated inputs (the 금액 box). Disabling the credential inputs
-  // once we're past the gate takes the page out of their scope.
+  // autofill unrelated inputs (the 금액 box). Disabling them wasn't enough on
+  // iOS — Safari offers 비밀번호 자동완성 on any text field as long as a
+  // type="password" input exists anywhere in the document. So we physically
+  // pull the credential inputs out of the DOM once we're past the gate and put
+  // them back only when the gate is shown again.
+  var authFieldParking = {};
   function setAuthInputsEnabled(on){
     ["auth_email","auth_password"].forEach(function(id){
-      var el = document.getElementById(id);
-      if (el) el.disabled = !on;
+      var park = authFieldParking[id];
+      if (on){
+        if (park && !park.el.parentNode){ park.slot.parentNode.insertBefore(park.el, park.slot); }
+        var el = document.getElementById(id);
+        if (el) el.disabled = false;
+        return;
+      }
+      var live = document.getElementById(id);
+      if (!live) return;
+      live.disabled = true;
+      live.value = "";
+      if (!park){
+        park = { el: live, slot: document.createComment("auth-" + id) };
+        authFieldParking[id] = park;
+      }
+      if (live.parentNode){
+        live.parentNode.insertBefore(park.slot, live);
+        live.parentNode.removeChild(live);
+      }
     });
   }
   function hideAuthGate(){
@@ -959,7 +1026,19 @@
     });
   }
 
+  // getSession() and onAuthStateChange both fire on startup, and the boot has
+  // awaits in it, so without this the two can interleave and load twice.
+  var authBooting = null;
   async function onAuthChange(session){
+    var uid = session && session.user ? session.user.id : null;
+    if (uid && appReady && uid === currentUserId) return;
+    if (uid && authBooting === uid) return;
+    authBooting = uid;
+    try { await bootForSession(session); }
+    finally { if (authBooting === uid) authBooting = null; }
+  }
+
+  async function bootForSession(session){
     if (session && session.user){
       currentUserId = session.user.id;
       var userEmail = session.user.email || "";
@@ -979,6 +1058,8 @@
       if (cached){ try { state = JSON.parse(cached); } catch(e){} }
       hideAuthGate();
       render();
+      appReady = true;
+      restoreDraft();
 
       var cloud = await cloudLoad(currentUserId);
       if (cloud){
@@ -993,7 +1074,9 @@
         } else {
           state = cloud;
           try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+          var cloudSnap = snapshotFormValues();
           render();
+          restoreFormValues(cloudSnap);
         }
       } else {
         // brand new account on this browser: offer to migrate any pre-login local data
@@ -1014,6 +1097,8 @@
       }
     } else {
       currentUserId = null;
+      appReady = false;
+      clearDraft();
       state = { instances: [], selectedId: null };
       showAuthGate();
     }
@@ -1182,15 +1267,19 @@
   }
 
   function round2(n){ return Math.round(n*100)/100; }
+  function round4(n){ return Math.round(n*10000)/10000; }
+  // 표시용 자릿수. 입력값은 소수점 4자리까지 그대로 저장되고, 여기서 반올림하는
+  // 건 화면에 찍는 문자열뿐이다 (input value는 이 함수들을 안 거친다).
+  var MONEY_DIGITS = 2;
   function fmtMoney(n){
     if (n == null || isNaN(n)) return "–";
     var sign = n < 0 ? "-" : "";
     n = Math.abs(n);
-    return sign + "$" + n.toLocaleString("en-US", {minimumFractionDigits:4, maximumFractionDigits:4});
+    return sign + "$" + n.toLocaleString("en-US", {minimumFractionDigits:MONEY_DIGITS, maximumFractionDigits:MONEY_DIGITS});
   }
   function fmtMoney0(n){
     if (n == null || isNaN(n)) return "–";
-    return (n<0?"-":"") + "$" + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:4, maximumFractionDigits:4});
+    return (n<0?"-":"") + "$" + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:MONEY_DIGITS, maximumFractionDigits:MONEY_DIGITS});
   }
   function fmtPct(n, d){
     if (n == null || isNaN(n)) return "–";
@@ -1292,7 +1381,9 @@
       }
     });
     inst.realAvgCostQty = qty;
-    if (qty > 0) inst.realAvgCost = round2(cost/qty);
+    // 체결가·수량은 소수점 4자리까지 입력받으니 평단도 거기서 잘라내지 않는다.
+    // 화면에는 2자리로만 보여주고, 계산에는 이 정밀한 값을 쓴다.
+    if (qty > 0) inst.realAvgCost = round4(cost/qty);
   }
 
   function normalizeState(){
@@ -1716,20 +1807,17 @@
 
   function fmtCurrencyDigits(usdAmount, digits){
     if (usdAmount == null || isNaN(usdAmount)) return "–";
-    var opts = { minimumFractionDigits: digits, maximumFractionDigits: digits };
+    // 원화는 1원 밑으로 내려갈 일이 없고 자릿수도 훨씬 길어서, 어디서 부르든
+    // 소수점 없이 보여준다. digits는 달러 표시에만 쓴다.
     if (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw){
-      var krw = usdAmount * state.fx.usdkrw;
-      return (krw<0?"-":"") + "₩" + Math.abs(krw).toLocaleString("ko-KR", opts);
+      var krw = Math.round(usdAmount * state.fx.usdkrw);
+      return (krw<0?"-":"") + "₩" + Math.abs(krw).toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     }
+    var opts = { minimumFractionDigits: digits, maximumFractionDigits: digits };
     return (usdAmount<0?"-":"") + "$" + Math.abs(usdAmount).toLocaleString("en-US", opts);
   }
-  function fmtCurrency(usdAmount){ return fmtCurrencyDigits(usdAmount, 4); }
-  // 자산배분 범례는 이름·평가금·비중·손익을 한 줄에 담아야 해서 자릿수를 줄인다.
-  // 원화는 관례대로 소수점을 안 쓰고(그리고 자릿수가 훨씬 길어서) 0자리.
-  function fmtCurrency2(usdAmount){
-    var isKrw = (state.portfolioCurrency === "KRW" && state.fx && state.fx.usdkrw);
-    return fmtCurrencyDigits(usdAmount, isKrw ? 0 : 2);
-  }
+  function fmtCurrency(usdAmount){ return fmtCurrencyDigits(usdAmount, MONEY_DIGITS); }
+  function fmtCurrency2(usdAmount){ return fmtCurrency(usdAmount); }
 
   /* ---------------- rendering ---------------- */
   var mainArea = document.getElementById("mainArea");
@@ -1744,6 +1832,79 @@
   // absent) means "latest", which is the normal editable view. Transient UI
   // state — a look at history, not a change to it, so it isn't persisted.
   var historyView = {};
+
+  // Which collapsed mobile rows the user has opened, keyed by row. Kept across
+  // re-renders so editing a field inside an open row doesn't snap it shut.
+  var openRows = {};
+  function rowHeadCell(key, main, sub){
+    return '<td class="row-head" data-row="' + escapeHtml(key) + '">' +
+      '<span class="rh-main">' + main + '</span>' +
+      '<span class="rh-sub">' + sub + '</span>' +
+      '<span class="rh-chev">\u25BC</span></td>';
+  }
+  function rowOpenClass(key){ return openRows[key] ? " is-open" : ""; }
+
+  // 손익 탭의 긴 표들. 기본은 접힘이고, 편 상태는 openRows에 남겨서 시세가
+  // 갱신되며 다시 그려져도 도로 닫히지 않게 한다.
+  function foldedHtml(key, label, innerHtml){
+    if (!innerHtml) return "";
+    return '<details class="fold" data-fold="' + escapeHtml(key) + '"' +
+      (openRows["fold:" + key] ? " open" : "") + '>' +
+      '<summary>' + label + '</summary>' + innerHtml + '</details>';
+  }
+
+  // A phone can throw the whole tab away while the user is in another app; when
+  // they come back the page is a cold load and everything half-typed is gone.
+  // Two things have to survive: the 체결 rows (which otherwise live only in an
+  // entry form's closure, so even an in-page re-render loses them) and the
+  // plain fields. The first we keep in a module-level store, the second we
+  // stash in sessionStorage — per-tab, so it rides through a discard/restore.
+  var pendingFillsDraft = {};
+  function fillsDraft(key){
+    if (!pendingFillsDraft[key]) pendingFillsDraft[key] = [];
+    return pendingFillsDraft[key];
+  }
+  var DRAFT_KEY = "vrtracker.draft.v1";
+  var DRAFT_TTL_MS = 60*60*1000;
+  var draftTimer = null;
+  function draftViewKey(){
+    return state.viewMode + ":" + (state.viewMode === "mu" ? state.muSelectedId : state.selectedId);
+  }
+  function saveDraft(){
+    if (!appReady) return;
+    try {
+      var snap = snapshotFormValues();
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        at: Date.now(),
+        view: draftViewKey(),
+        values: snap.values,
+        scrollY: snap.scrollY,
+        fills: pendingFillsDraft
+      }));
+    } catch(e){}
+  }
+  function queueSaveDraft(){
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(function(){ draftTimer = null; saveDraft(); }, 350);
+  }
+  function clearDraft(){
+    pendingFillsDraft = {};
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch(e){}
+  }
+  function restoreDraft(){
+    var raw = null;
+    try { raw = sessionStorage.getItem(DRAFT_KEY); } catch(e){}
+    if (!raw) return;
+    var d = null;
+    try { d = JSON.parse(raw); } catch(e){}
+    if (!d || !d.at || (Date.now() - d.at) > DRAFT_TTL_MS){ clearDraft(); return; }
+    if (d.view !== draftViewKey()){ clearDraft(); return; }
+    if (d.fills){
+      pendingFillsDraft = d.fills;
+      renderMain();  // entry forms read their 체결 rows from the store on build
+    }
+    restoreFormValues({ values: d.values || {}, activeId: null, scrollY: d.scrollY });
+  }
 
   // Renders ← date → with a 최신 button. `records` are date-bearing entries in
   // chronological order; index is the currently viewed one (null = latest).
@@ -1899,7 +2060,11 @@
       if (el.type === "checkbox" || el.type === "radio") out[el.id] = { checked: el.checked };
       else out[el.id] = { value: el.value };
     });
-    return { values: out, activeId: (document.activeElement && document.activeElement.id) || null };
+    return {
+      values: out,
+      activeId: (document.activeElement && document.activeElement.id) || null,
+      scrollY: pageScrollY()
+    };
   }
   function restoreFormValues(snap){
     if (!snap) return;
@@ -1914,6 +2079,22 @@
       var a = document.getElementById(snap.activeId);
       if (a && mainArea.contains(a)) { try { a.focus({ preventScroll: true }); } catch(e){ a.focus(); } }
     }
+    // Rebuilding mainArea momentarily collapses the page, and the browser pins
+    // the scroll to 0 on the way. Put the reader back where they were.
+    if (snap.scrollY) restoreScroll(snap.scrollY);
+  }
+  function pageScrollY(){
+    return window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  }
+  function restoreScroll(y){
+    if (!y) return;
+    var tries = 0;
+    (function attempt(){
+      window.scrollTo(0, y);
+      // Charts and tables settle over a frame or two and change the page
+      // height; keep nudging until the target is actually reachable.
+      if (++tries < 6 && Math.abs(pageScrollY() - y) > 2) requestAnimationFrame(attempt);
+    })();
   }
   // Re-render triggered by something other than the user (price/FX arriving).
   function renderMainPreservingInput(){
@@ -2040,7 +2221,7 @@
       stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
       stat("실현손익 (지금까지 매도로 확정된 손익)", fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
       '<div class="stat"><div class="label">실제평단 (직접입력, 이후 사이클 체결이 자동 반영돼요)</div>' +
-        '<input id="realAvgCostInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
+        '<input id="realAvgCostInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input" style="width:100%;" ' +
         'value="' + (realAvg != null ? realAvg : "") + '" placeholder="예: 45.20" /></div>' +
       stat("손익 (실제평단 기준)", pnlStr(realProfit, realProfitPct), false, pnlColor(realProfit));
     mainArea.appendChild(stats);
@@ -2102,13 +2283,13 @@
         '<h3 style="margin-top:22px;">③ 사이클 마감 정보</h3>' +
         '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
-          field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" value="' + suggestedDate(inst) + '" />') +
-          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 74.47" />') +
+          field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" autocomplete="off" value="' + suggestedDate(inst) + '" />') +
+          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 74.47" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
-          field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.01" value="0" />') +
-          field("SPY 종가 (선택)", '<input id="cy_spy" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="비교차트용" />') +
-          field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="비교차트용" />') +
+          field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.0001" value="0" />') +
+          field("SPY 종가 (선택)", '<input id="cy_spy" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
+          field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
         '</div>' +
         '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
         '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 마감하고 기록하기</button></div>';
@@ -2205,7 +2386,8 @@
       return segNow.type === "인출식" ? -Math.abs(d) : d;
     }
 
-    var pendingFills = [];
+    var fillsKey = "vr:" + inst.id;
+    var pendingFills = fillsDraft(fillsKey);
     function validFills(){
       return pendingFills.filter(function(f){ return f.qty > 0 && f.price > 0; });
     }
@@ -2224,7 +2406,7 @@
               '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
             '</select></td>' +
             '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
-            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
+            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
             '<td><button type="button" class="btn btn-sm btn-ghost btn-danger fill-del">삭제</button></td>' +
             '</tr>';
         }).join("") + '</tbody></table></div>';
@@ -2292,6 +2474,8 @@
       currentSegment(inst, date).gDeferred = false;
       delete sellLadderExpand[inst.id];
       delete historyView[inst.id];
+      pendingFills.length = 0;
+      clearDraft();
       saveState();
       render();
     });
@@ -2455,7 +2639,7 @@
                 '보다 위에 큰수매수로 걸어요.') +
             '<div class="field" style="max-width:220px;margin-top:8px;">' +
               '<label>기준가 직접 입력 ($)</label>' +
-              '<input id="muRefPriceInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" class="cell-input" style="width:100%;" ' +
+              '<input id="muRefPriceInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" min="0" class="cell-input" style="width:100%;" ' +
                 'value="' + (inst.manualRefPrice || "") + '" placeholder="예: 22.10" />' +
             '</div>' +
           '</div>')
@@ -2572,8 +2756,8 @@
     return '<h3>오늘 기록 입력</h3>' +
       '<div class="card-desc">오늘 종가와 실제 체결내역을 입력하고, 오늘 T가 어떻게 진행됐는지 골라주세요. 매매가 없었으면 체결내역은 비워두세요.</div>' +
       '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
-        field("날짜", '<input id="mu_e_date" type="date" value="' + todayStr() + '" />') +
-        field(inst.ticker + " 종가 ($)", '<input id="mu_e_close" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="종가" />') +
+        field("날짜", '<input id="mu_e_date" type="date" autocomplete="off" value="' + todayStr() + '" />') +
+        field(inst.ticker + " 종가 ($)", '<input id="mu_e_close" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="종가" />') +
       '</div>' +
       '<div style="margin-top:14px;">' +
         '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">체결내역 <span class="hint">매매가 있었으면 한 줄씩 추가하세요</span></label>' +
@@ -2586,7 +2770,7 @@
         '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;">' +
           '<input type="checkbox" id="mu_e_toverride_on" /> T를 직접 지정할게요 <span class="hint">(자동 계산이 실제와 다를 때만)</span>' +
         '</label>' +
-        '<input id="mu_e_toverride" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" class="cell-input" style="width:160px;margin-top:6px;display:none;" />' +
+        '<input id="mu_e_toverride" type="number" autocomplete="off" inputmode="decimal" step="0.0001" min="0" class="cell-input" style="width:160px;margin-top:6px;display:none;" />' +
       '</div>' +
       (last.mode === "general"
         ? '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;"><input type="checkbox" id="mu_e_exhausted" /> 오늘부로 매수 1개도 불가능해졌어요 (소진 → 리버스모드 전환)</label>'
@@ -2596,7 +2780,8 @@
   }
 
   function wireMuEntryForm(inst, last){
-    var pendingFills = [];
+    var fillsKey = "mu:" + inst.id;
+    var pendingFills = fillsDraft(fillsKey);
     function validFills(){ return pendingFills.filter(function(f){ return f.qty > 0 && f.price > 0; }); }
     function renderFillsList(){
       var host = document.getElementById("muFillsListHost");
@@ -2613,7 +2798,7 @@
               '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
             '</select></td>' +
             '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="1" class="cell-input mu-fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
-            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input mu-fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
+            '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input mu-fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
             '<td><button type="button" class="btn btn-sm btn-ghost btn-danger mu-fill-del">삭제</button></td>' +
             '</tr>';
         }).join("") + '</tbody></table></div>';
@@ -2702,6 +2887,8 @@
       inst.realizedPL = res.realizedPL;
       inst.mode = res.mode;
       delete historyView[inst.id];
+      pendingFills.length = 0;
+      clearDraft();
       saveState();
       render();
     });
@@ -2865,7 +3052,7 @@
       stat("예수금 합계 (VR Pool + 그외, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
       '<div class="stat"><div class="label">└ 그외 예수금 <span class="hint">VR Pool 말고 나머지 현금 전부</span></div>' +
-        '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
+        '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input" style="width:100%;" ' +
         'value="' + extraCash + '" placeholder="예: 500" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
       stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit)) +
@@ -2913,7 +3100,7 @@
       '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. 아래 "직접 추가한 종목"에서 매수/매도를 기록해도 여기 자동으로 남아요.</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,1fr);align-items:end;">' +
         field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
-        field("금액 ($)", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 500" />') +
+        field("금액 ($)", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 500" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
       '</div>' +
       (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
@@ -3018,7 +3205,12 @@
       var cls = x.t.type === "buy" ? "signal-buy" : "signal-sell";
       var amount = x.t.qty * x.t.price;
       var gainCell = x.t.type === "sell" ? ('<span style="color:' + (x.t.gain>0?"var(--buy)":(x.t.gain<0?"var(--sell)":"var(--ink-soft)")) + '">' + fmtMoney0(x.t.gain) + '</span>') : '<span class="footnote">–</span>';
-      return '<tr><td data-label="날짜">' + fmtDate(x.t.date) + '</td>' +
+      var trKey = "trade:" + x.t.id;
+      return '<tr class="' + rowOpenClass(trKey).replace(/^ /,"") + '">' +
+        rowHeadCell(trKey,
+          fmtDate(x.t.date) + ' ' + escapeHtml(x.h.ticker),
+          typeTxt + ' ' + x.t.qty + '주 · ' + fmtMoney0(amount)) +
+        '<td data-label="날짜">' + fmtDate(x.t.date) + '</td>' +
         '<td data-label="종목">' + escapeHtml(x.h.ticker) + '</td>' +
         '<td data-label="구분"><span class="signal-badge ' + cls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + typeTxt + '</span></td>' +
         '<td class="num" data-label="수량">' + x.t.qty + '</td>' +
@@ -3040,12 +3232,12 @@
             field("종목", '<select id="tr_ticker">' + tickerOptions + '</select>') +
             field("구분", '<select id="tr_type"><option value="buy">매수</option><option value="sell">매도</option></select>') +
             field("수량", '<input id="tr_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 10" />') +
-            field("가격 ($)", '<input id="tr_price" type="number" autocomplete="off" inputmode="decimal" step="0.01" placeholder="예: 230.5" />') +
-            field("날짜", '<input id="tr_date" type="date" value="' + todayStr() + '" />') +
+            field("가격 ($)", '<input id="tr_price" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 230.5" />') +
+            field("날짜", '<input id="tr_date" type="date" autocomplete="off" value="' + todayStr() + '" />') +
           '</div>' +
           '<div class="form-actions"><button class="btn btn-primary" id="tradeSubmitBtn" type="button">기록하기</button></div>')
         : '<div class="chart-empty">먼저 위에서 종목을 추가하고 티커를 입력하면 여기서 매매를 기록할 수 있어요.</div>') +
-      (tradeRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>종목</th><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">금액</th><th class="num">실현손익</th><th class="col-action"></th></tr></thead><tbody>' + tradeRows + '</tbody></table></div>')
+      (tradeRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile collapsible-rows"><thead><tr><th>날짜</th><th>종목</th><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">금액</th><th class="num">실현손익</th><th class="col-action"></th></tr></thead><tbody>' + tradeRows + '</tbody></table></div>')
         : '');
     mainArea.appendChild(manCard);
     renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
@@ -3143,9 +3335,15 @@
       fetchLivePrices(allTickers, true).then(function(){ renderMainPreservingInput(); });
     });
     document.getElementById("addHoldingBtn").addEventListener("click", function(){
-      state.portfolio.holdings.push({ id: uid(), ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
+      var newId = uid();
+      state.portfolio.holdings.push({ id: newId, ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
+      // A brand-new row is empty, so it has to come up already open — otherwise
+      // the user taps 종목 추가 and gets a closed "새 종목" line with nowhere to type.
+      openRows["hold:" + newId] = true;
       saveState();
       renderManualHoldingsTable(document.getElementById("manualHoldingsHost"));
+      var row = document.querySelector('#manualHoldingsHost tr[data-id="' + newId + '"] .h-ticker');
+      if (row){ row.scrollIntoView({ block: "center" }); row.focus(); }
     });
   }
 
@@ -3585,40 +3783,41 @@
           '<td class="num" data-label="전월대비" style="color:' + (delta==null?"var(--ink-soft)":pnlRowColor(delta)) + '">' + (delta==null?"–":((delta>0?"+":"")+fmtCurrency(delta))) + '</td>' +
           '</tr>';
       }).join("");
-      assetCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>';
+      assetCard.innerHTML += foldedHtml("asset", "월별 숫자로 보기 (" + monthly.length + "개월)",
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>');
     }
 
     var buckets = pnlBuckets0;
 
-    function realizedTable(map, keys, labelSuffix){
-      var rows = keys.map(function(k){
+    function realizedPoints(map, labelFn){
+      return Object.keys(map).sort().map(function(k){
         var row = map[k];
-        var total = row.vr + row.other;
-        return '<tr>' +
-          '<td data-label="기간">' + k + labelSuffix + '</td>' +
-          '<td class="num" data-label="VR" style="color:' + pnlRowColor(row.vr) + '">' + fmtCurrency(row.vr) + '</td>' +
-          '<td class="num" data-label="그외" style="color:' + pnlRowColor(row.other) + '">' + fmtCurrency(row.other) + '</td>' +
-          '<td class="num" data-label="합계" style="color:' + pnlRowColor(total) + '">' + fmtCurrency(total) + '</td>' +
-          '</tr>';
-      }).join("");
-      return rows
-        ? ('<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>기간</th><th class="num">VR</th><th class="num">그외</th><th class="num">합계</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
-        : '<div class="chart-empty">아직 매도(실현손익) 기록이 없어요.</div>';
+        return { label: labelFn(k), vr: row.vr, other: row.other, total: row.vr + row.other };
+      });
+    }
+    function realizedCard(title, desc, hostId, points){
+      var card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = "<h3>" + title + "</h3>" +
+        '<div class="card-desc">' + desc + '</div>' +
+        '<div id="' + hostId + '"></div>';
+      mainArea.appendChild(card);
+      renderRealizedBarChart(document.getElementById(hostId), points);
+      return card;
     }
 
-    var yearCard = document.createElement("div");
-    yearCard.className = "card";
-    yearCard.innerHTML = "<h3>실현손익 연도별</h3>" +
-      '<div class="card-desc">매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요.</div>' +
-      realizedTable(buckets.byYear, Object.keys(buckets.byYear).sort(), "년");
-    mainArea.appendChild(yearCard);
-
-    var monthCard = document.createElement("div");
-    monthCard.className = "card";
-    monthCard.innerHTML = "<h3>실현손익 월별</h3>" +
-      '<div class="card-desc">해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요.</div>' +
-      realizedTable(buckets.byMonth, Object.keys(buckets.byMonth).sort(), "");
-    mainArea.appendChild(monthCard);
+    realizedCard(
+      "실현손익 연도별",
+      "매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "realizedYearChartHost",
+      realizedPoints(buckets.byYear, function(k){ return k + "년"; })
+    );
+    realizedCard(
+      "실현손익 월별",
+      "해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "realizedMonthChartHost",
+      realizedPoints(buckets.byMonth, function(k){ return k; })
+    );
 
     var pnlMonthCard = document.createElement("div");
     pnlMonthCard.className = "card";
@@ -3635,7 +3834,8 @@
       var pnlMonthRows = monthly.map(function(m){
         return '<tr><td data-label="월">' + m.key + '</td><td class="num" data-label="누적손익" style="color:' + pnlRowColor(m.snap.cumulativePL) + '">' + fmtCurrency(m.snap.cumulativePL) + '</td></tr>';
       }).join("");
-      pnlMonthCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlMonthRows + '</tbody></table></div>';
+      pnlMonthCard.innerHTML += foldedHtml("pnlMonth", "월별 숫자로 보기 (" + monthly.length + "개월)",
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlMonthRows + '</tbody></table></div>');
     }
 
     var yearly = yearlySnapshots();
@@ -3704,10 +3904,11 @@
           '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost btn-danger" data-del="' + m.id + '">삭제</button></td>' +
         '</tr>';
       }).join("");
-      card.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile">' +
+      card.innerHTML += foldedHtml("manualRealized", "직접 적은 내역 보기 (" + sorted.length + "건)",
+        '<div class="table-wrap"><table class="stack-mobile">' +
         '<thead><tr><th>연월</th><th>종목</th><th class="num">실현손익</th><th>메모</th><th></th></tr></thead>' +
         '<tbody>' + rows + '</tbody></table></div>' +
-        '<div class="footnote" style="margin-top:8px;">직접입력 합계 · VR ' + fmtCurrency(totalVr) + ' / 그외 ' + fmtCurrency(totalOther) + '</div>';
+        '<div class="footnote" style="margin-top:8px;">직접입력 합계 · VR ' + fmtCurrency(totalVr) + ' / 그외 ' + fmtCurrency(totalOther) + '</div>');
     }
     mainArea.appendChild(card);
 
@@ -3738,7 +3939,7 @@
         id: uid(), month: monthEl.value,
         kind: isVr ? "vr" : "other",
         ticker: isVr ? "VR" : ticker,
-        amount: round2(amount),
+        amount: amount,
         memo: (document.getElementById("mrMemo").value || "").trim()
       });
       saveState();
@@ -3904,13 +4105,17 @@
       var profitCls = profit > 0 ? "var(--buy)" : (profit < 0 ? "var(--sell)" : "var(--ink-soft)");
       var priceCell = live != null
         ? ('<div class="num" style="padding:5px 7px;">' + fmtMoney(live) + ' <span class="footnote" style="display:inline;">실시간</span></div>')
-        : ('<input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
+        : ('<input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
       var realizedPL = h.realizedPL || 0;
       var realizedCls = realizedPL > 0 ? "var(--buy)" : (realizedPL < 0 ? "var(--sell)" : "var(--ink-soft)");
-      return '<tr data-id="' + h.id + '">' +
-        '<td data-label="티커"><input type="text" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
+      var hKey = "hold:" + h.id;
+      var headSub = (h.qty||0) + '주 · ' + fmtCurrency(value) +
+        (profitPct == null ? '' : (' · ' + (profit>0?'+':'') + fmtPct(profitPct,1)));
+      return '<tr data-id="' + h.id + '" class="' + rowOpenClass(hKey).replace(/^ /,"") + '">' +
+        rowHeadCell(hKey, escapeHtml(h.ticker || "새 종목"), headSub) +
+        '<td data-label="티커"><input type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
         '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
-        '<td class="num" data-label="매입평균가"><input type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
+        '<td class="num" data-label="매입평균가"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
         '<td class="num" data-label="현재가">' + priceCell + '</td>' +
         '<td class="num" data-label="평가금">' + fmtCurrency(value) + '</td>' +
         '<td class="num" data-label="미실현 수익금" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
@@ -3919,7 +4124,7 @@
         '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
         '</tr>';
     }).join("");
-    host.innerHTML = '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
+    host.innerHTML = '<div class="table-wrap"><table class="stack-mobile collapsible-rows"><thead><tr>' +
       '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
       '<th class="num">평가금</th><th class="num">미실현 수익금</th><th class="num">미실현 수익률</th><th class="num">실현손익</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
@@ -4748,6 +4953,115 @@
     }
   }
 
+  // Realized P/L per period. A table of these got long enough that the 손익 tab
+  // was mostly scrolling, and a line would be wrong anyway — each period stands
+  // on its own, so bars off a zero line (green up / red down) read faster.
+  // points: [{ label, vr, other, total }]
+  function renderRealizedBarChart(host, points){
+    // Axis gets whole units (cents on a gridline are just noise), the tooltip
+    // gets the precise figure.
+    var axisFmt = function(v){ return fmtCurrencyDigits(v, 0); };
+    var valueFmt = fmtCurrency2;
+    host.innerHTML = "";
+    if (!points.length){
+      host.innerHTML = '<div class="chart-empty">아직 매도(실현손익) 기록이 없어요.</div>';
+      return;
+    }
+    var avail = host.clientWidth || 900;
+    var pad = {l:70, r:16, t:16, b:34};
+    // Below ~22px a slot the bars stop being readable, so let the card scroll
+    // sideways instead of squeezing years of months into one phone screen.
+    var minSlot = 22;
+    var W = Math.max(avail, pad.l + pad.r + points.length * minSlot);
+    var H = 260;
+    var scrolls = W > avail + 1;
+
+    var outer = document.createElement("div");
+    if (scrolls){
+      outer.style.overflowX = "auto";
+      host.style.position = "relative";
+    }
+    var wrap = document.createElement("div");
+    wrap.className = "chart-wrap";
+    if (scrolls) wrap.style.width = W + "px";
+    var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
+    wrap.appendChild(svg);
+    var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
+    outer.appendChild(wrap);
+    host.appendChild(outer);
+
+    var vals = points.map(function(p){ return p.total; });
+    var minV = Math.min.apply(null, vals.concat([0]));
+    var maxV = Math.max.apply(null, vals.concat([0]));
+    if (minV === maxV){ minV -= 1; maxV += 1; }
+    var padV = (maxV - minV) * 0.12;
+    minV -= padV; maxV += padV;
+    function y(v){ return H - pad.b - (v - minV)/(maxV - minV) * (H - pad.t - pad.b); }
+
+    var slot = (W - pad.l - pad.r) / points.length;
+    var barW = Math.max(3, Math.min(38, slot * 0.62));
+    function cx(i){ return pad.l + slot * (i + 0.5); }
+
+    // When the bars scroll sideways, the y-axis has to stay put or the numbers
+    // slide off screen — so it gets drawn into an opaque layer pinned to the
+    // left edge instead of into the scrolling SVG.
+    var axisSvg = null;
+    if (scrolls){
+      var axisLayer = document.createElement("div");
+      axisLayer.style.cssText = "position:absolute;left:0;top:0;width:" + pad.l +
+        "px;height:" + H + "px;background:var(--panel);pointer-events:none;";
+      axisSvg = svgEl("svg", {viewBox:"0 0 "+pad.l+" "+H, width:pad.l, height:H, style:"display:block;overflow:visible;"});
+      axisLayer.appendChild(axisSvg);
+      host.appendChild(axisLayer);
+    }
+
+    var gridN = 4;
+    for (var g=0; g<=gridN; g++){
+      var gv = minV + (maxV - minV) * g / gridN;
+      var gy = y(gv);
+      svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
+      var gl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
+      gl.textContent = axisFmt(gv);
+      (axisSvg || svg).appendChild(gl);
+    }
+    var zeroY = y(0);
+    svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:zeroY, y2:zeroY, stroke:cssVar('--ink-soft'), "stroke-width":1.25}));
+
+    var maxLabels = Math.max(2, Math.floor((W - pad.l - pad.r) / 56));
+    var step = Math.max(1, Math.ceil(points.length / maxLabels));
+
+    points.forEach(function(p, i){
+      var top = p.total >= 0 ? y(p.total) : zeroY;
+      var h = Math.max(1.5, Math.abs(y(p.total) - zeroY));
+      var color = p.total > 0 ? cssVar('--buy') : (p.total < 0 ? cssVar('--sell') : cssVar('--hold'));
+      var bar = svgEl("rect", {
+        x: cx(i) - barW/2, y: top, width: barW, height: h,
+        rx: Math.min(3, barW/2), fill: color, style:"cursor:pointer;"
+      });
+      bindPointerTip(bar, function(ev){ showTip(ev, p); }, function(){ tooltip.style.opacity = 0; });
+      svg.appendChild(bar);
+
+      if (i % step === 0 || i === points.length-1){
+        var xl = svgEl("text", {x:cx(i), y:H-10, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
+        xl.textContent = p.label;
+        svg.appendChild(xl);
+      }
+    });
+
+    function showTip(ev, p){
+      var r = wrap.getBoundingClientRect();
+      tooltip.style.left = (ev.clientX - r.left) + "px";
+      tooltip.style.top = (ev.clientY - r.top) + "px";
+      tooltip.style.opacity = 1;
+      tooltip.innerHTML = "<b>" + p.label + "</b><br/>합계 " + valueFmt(p.total) +
+        "<br/>VR " + valueFmt(p.vr) + " · 그외 " + valueFmt(p.other);
+    }
+
+    // Recent months are what people look at, so a scrolling chart opens at the
+    // right edge rather than back in the first year of records.
+    if (scrolls) outer.scrollLeft = W;
+  }
+
   /* ---------------- modals ---------------- */
   var newModal = document.getElementById("newInstanceModal");
   function applyPoolLimitDefaultsToNiForm(type){
@@ -5083,6 +5397,30 @@
       restoreFormValues(snap);
     }, 180);
   });
+  mainArea.addEventListener("click", function(ev){
+    var t = ev.target;
+    var head = (t && t.closest) ? t.closest("td.row-head") : null;
+    if (!head) return;
+    var tr = head.parentNode;
+    var key = head.getAttribute("data-row");
+    var open = !tr.classList.contains("is-open");
+    tr.classList.toggle("is-open", open);
+    if (open) openRows[key] = true; else delete openRows[key];
+  });
+  mainArea.addEventListener("toggle", function(ev){
+    var d = ev.target;
+    if (!d || !d.getAttribute || !d.getAttribute("data-fold")) return;
+    var k = "fold:" + d.getAttribute("data-fold");
+    if (d.open) openRows[k] = true; else delete openRows[k];
+  }, true);
+  mainArea.addEventListener("input", queueSaveDraft, true);
+  mainArea.addEventListener("change", queueSaveDraft, true);
+  window.addEventListener("scroll", queueSaveDraft, { passive: true });
+  window.addEventListener("pagehide", saveDraft);
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "hidden") saveDraft();
+  });
+
   wireAuthUI();
   wireApprovalUI();
   if (sb){
