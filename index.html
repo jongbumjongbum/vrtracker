@@ -1423,6 +1423,20 @@
   // same way computeEffectiveCostBasis / computeMuDay do, bucketing each
   // sell's realized gain by both the year and the "YYYY-MM" month it happened
   // in, so 손익 tab tables/charts don't need to re-walk the same data twice.
+  // Prior-app entries are recorded per month; the buckets and the range filter
+  // both work on day strings, so a month lands on its 1st.
+  function manualRealizedMonth(m){
+    if (m.month) return m.month;
+    return m.date ? String(m.date).slice(0, 7) : null;   // rows saved before this was monthly
+  }
+  function manualRealizedDate(m){
+    var mo = manualRealizedMonth(m);
+    return mo ? mo + "-01" : null;
+  }
+  function manualRealizedLabel(m){
+    if (m.kind === "vr") return "VR";
+    return (m.ticker || "").toUpperCase() || "그외";
+  }
   function realizedPLBuckets(){
     var byYear = {}, byMonth = {}, events = [];
     function add(map, key, kind, amount){
@@ -1481,8 +1495,9 @@
     // added to cash or 총자산, because 그외 예수금 already holds the real
     // balance those trades produced.
     (state.portfolio.manualRealized||[]).forEach(function(m){
-      if (!m.date || !(m.amount || m.amount === 0)) return;
-      addBoth(m.date, m.kind === "vr" ? "vr" : "other", m.amount);
+      var when = manualRealizedDate(m);
+      if (!when || typeof m.amount !== "number") return;
+      addBoth(when, m.kind === "vr" ? "vr" : "other", m.amount);
     });
     return { byYear: byYear, byMonth: byMonth, events: events };
   }
@@ -3619,20 +3634,25 @@
   // the app, so the year/month/period tables above aren't missing their history.
   function renderManualRealizedCard(){
     var list = state.portfolio.manualRealized || [];
-    var sorted = list.slice().sort(function(a,b){ return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+    var sorted = list.slice().sort(function(a,b){
+      var am = manualRealizedMonth(a) || "", bm = manualRealizedMonth(b) || "";
+      return am < bm ? 1 : (am > bm ? -1 : 0);
+    });
     var totalVr = 0, totalOther = 0;
     list.forEach(function(m){ if (m.kind === "vr") totalVr += m.amount; else totalOther += m.amount; });
 
+    var thisMonth = todayStr().slice(0, 7);
     var card = document.createElement("div");
     card.className = "card";
     card.innerHTML = "<h3>이 앱을 쓰기 전 실현손익 직접입력</h3>" +
-      '<div class="card-desc">앱에 매매를 기록하기 전에 확정된 손익을 여기에 적어두면, 위의 기간별·연도별·월별 표에 같이 합산돼요. ' +
+      '<div class="card-desc">앱에 매매를 기록하기 전에 확정된 손익을 <b>월 단위로</b> 적어두면, 위의 기간별·연도별·월별 표에 같이 합산돼요. ' +
       '예수금과 총자산은 <b>바뀌지 않아요</b> — 지금 예수금에는 이미 그 매매 결과가 들어가 있으니까 여기서 또 더하면 두 번 세는 셈이 되거든요.</div>' +
-      '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);margin-top:12px;">' +
-        field("날짜", '<input id="mrDate" type="date" autocomplete="off" value="' + todayStr() + '" />') +
-        field("구분", '<select id="mrKind"><option value="other">그외</option><option value="vr">VR</option></select>') +
-        field("실현손익 ($)", '<input id="mrAmount" type="text" autocomplete="off" inputmode="decimal" placeholder="예: 1250.30 (손실은 -1250.30)" />') +
-        field("메모", '<input id="mrMemo" type="text" autocomplete="off" placeholder="예: 2025년 TQQQ 매도" />') +
+      '<div class="form-grid" style="grid-template-columns:repeat(5,1fr);margin-top:12px;">' +
+        field("연월", '<input id="mrMonth" type="month" autocomplete="off" value="' + thisMonth + '" />') +
+        field("구분", '<select id="mrKind"><option value="other">그외 (티커 입력)</option><option value="vr">VR</option></select>') +
+        field("티커", '<input id="mrTicker" type="text" autocomplete="off" style="text-transform:uppercase;" placeholder="예: TQQQ" />') +
+        field("실현손익 ($)", '<input id="mrAmount" type="text" autocomplete="off" inputmode="decimal" placeholder="1250.30 / -1250.30" />') +
+        field("메모", '<input id="mrMemo" type="text" autocomplete="off" placeholder="예: 무한매수 1차" />') +
       '</div>' +
       '<div class="form-actions"><button type="button" class="btn btn-primary" id="mrAdd">추가</button></div>' +
       '<div class="footnote" id="mrMsg" style="margin-top:6px;"></div>';
@@ -3640,31 +3660,47 @@
     if (sorted.length){
       var rows = sorted.map(function(m){
         return '<tr>' +
-          '<td data-label="날짜">' + fmtDate(m.date) + '</td>' +
-          '<td data-label="구분">' + (m.kind === "vr" ? "VR" : "그외") + '</td>' +
+          '<td data-label="연월">' + (manualRealizedMonth(m) || "") + '</td>' +
+          '<td data-label="종목">' + escapeHtml(manualRealizedLabel(m)) + '</td>' +
           '<td class="num" data-label="실현손익" style="color:' + pnlRowColor(m.amount) + '">' + fmtCurrency(m.amount) + '</td>' +
           '<td data-label="메모">' + escapeHtml(m.memo || "") + '</td>' +
           '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost btn-danger" data-del="' + m.id + '">삭제</button></td>' +
         '</tr>';
       }).join("");
       card.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile">' +
-        '<thead><tr><th>날짜</th><th>구분</th><th class="num">실현손익</th><th>메모</th><th></th></tr></thead>' +
+        '<thead><tr><th>연월</th><th>종목</th><th class="num">실현손익</th><th>메모</th><th></th></tr></thead>' +
         '<tbody>' + rows + '</tbody></table></div>' +
         '<div class="footnote" style="margin-top:8px;">직접입력 합계 · VR ' + fmtCurrency(totalVr) + ' / 그외 ' + fmtCurrency(totalOther) + '</div>';
     }
     mainArea.appendChild(card);
 
+    // VR entries are always labelled VR, so the ticker box only applies to 그외.
+    var kindEl = document.getElementById("mrKind");
+    var tickerEl = document.getElementById("mrTicker");
+    function syncTickerBox(){
+      var isVr = kindEl.value === "vr";
+      tickerEl.disabled = isVr;
+      tickerEl.placeholder = isVr ? "VR" : "예: TQQQ";
+      if (isVr) tickerEl.value = "";
+    }
+    kindEl.addEventListener("change", syncTickerBox);
+    syncTickerBox();
+
     var addBtn = card.querySelector("#mrAdd");
     addBtn.addEventListener("click", function(){
-      var dateEl = document.getElementById("mrDate");
+      var monthEl = document.getElementById("mrMonth");
       var amtEl = document.getElementById("mrAmount");
       var msg = document.getElementById("mrMsg");
+      var isVr = kindEl.value === "vr";
+      var ticker = (tickerEl.value || "").trim().toUpperCase();
       var amount = parseFloat(String(amtEl.value).replace(/[, $]/g, ""));
-      if (!dateEl.value){ msg.textContent = "날짜를 골라주세요."; return; }
+      if (!monthEl.value){ msg.textContent = "연월을 골라주세요."; return; }
+      if (!isVr && !ticker){ msg.textContent = "티커를 적어주세요. (무한매수로 굴린 TQQQ면 TQQQ)"; return; }
       if (isNaN(amount)){ msg.textContent = "실현손익 금액을 숫자로 적어주세요. 손실이면 앞에 - 를 붙이세요."; return; }
       state.portfolio.manualRealized.push({
-        id: uid(), date: dateEl.value,
-        kind: document.getElementById("mrKind").value === "vr" ? "vr" : "other",
+        id: uid(), month: monthEl.value,
+        kind: isVr ? "vr" : "other",
+        ticker: isVr ? "VR" : ticker,
         amount: round2(amount),
         memo: (document.getElementById("mrMemo").value || "").trim()
       });
