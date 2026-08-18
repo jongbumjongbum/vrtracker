@@ -3382,7 +3382,7 @@
     { key:"thisYear", label:"올해" },
     { key:"lastYear", label:"지난해" },
     { key:"all", label:"전체" },
-    { key:"custom", label:"직접입력" }
+    { key:"custom", label:"기간 지정" }
   ];
   function ymd(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
   // Resolves a preset to an inclusive [from, to] date range. "all" returns
@@ -3429,7 +3429,7 @@
     var rangeCard = document.createElement("div");
     rangeCard.className = "card";
     rangeCard.innerHTML = "<h3>기간별 실현손익</h3>" +
-      '<div class="card-desc">보고 싶은 기간을 고르면 그 사이에 매도로 확정된 손익만 합산해요.</div>' +
+      '<div class="card-desc">보고 싶은 기간을 고르면, 그 사이에 매도로 확정된 손익만 아래에 합산해서 보여줘요. 아래 금액은 기록된 매매에서 자동으로 계산되는 결과라서 직접 고쳐 쓸 수 없어요.</div>' +
       '<div class="preset-row">' +
         PNL_PRESETS.map(function(p){
           return '<button type="button" class="btn btn-sm preset-btn' + (p.key===preset?" active":"") + '" data-preset="' + p.key + '">' + p.label + '</button>';
