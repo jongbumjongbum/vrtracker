@@ -1510,7 +1510,19 @@
   function upsertTodaySnapshotIfMissing(totalAsset, unrealizedPL, realizedPL){
     var today = todayStr();
     var snaps = state.portfolio.assetSnapshots;
-    if (snaps.some(function(s){ return s.date === today; })) return;
+    var existing = snaps.filter(function(s){ return s.date === today; })[0];
+    if (existing){
+      // 총자산 stays as first seen today, but a realized figure that has moved
+      // since (a trade edited, or a stale value written by an older version)
+      // must not be left frozen on the 누적손익 graph.
+      var fresh = round2(realizedPL);
+      if (existing.realizedPL !== fresh){
+        existing.realizedPL = fresh;
+        existing.cumulativePL = round2((existing.unrealizedPL || 0) + fresh);
+        saveState();
+      }
+      return;
+    }
     snaps.push({
       date: today, totalAsset: round2(totalAsset), unrealizedPL: round2(unrealizedPL),
       realizedPL: round2(realizedPL), cumulativePL: round2(unrealizedPL + realizedPL)
@@ -1519,20 +1531,28 @@
     saveState();
   }
   // Today's snapshot is written once on the first Portfolio visit of the day and
-  // never overwritten, so adding prior-app realized P/L afterwards would leave
-  // today's 누적손익 point stale until tomorrow. Patch just that number in place;
-  // 총자산 keeps its first-check-of-the-day meaning.
-  function refreshTodaySnapshotRealized(delta){
-    if (!delta) return;
-    var today = todayStr();
-    (state.portfolio.assetSnapshots||[]).forEach(function(sn){
-      if (sn.date !== today) return;
-      sn.realizedPL = round2((sn.realizedPL || 0) + delta);
-      sn.cumulativePL = round2((sn.cumulativePL || 0) + delta);
+  // never overwritten. Prior-app realized P/L is therefore folded in at DISPLAY
+  // time instead of being written into the stored rows: every snapshot picks up
+  // the entries dated on or before it, so a March entry lifts the June and July
+  // points too rather than appearing as a jump on the day it was typed in.
+  // 총자산 is untouched — those entries are P/L history, not new money.
+  function snapshotsWithPriorRealized(){
+    var prior = (state.portfolio.manualRealized || []).map(function(m){
+      return { date: manualRealizedDate(m), amount: m.amount || 0 };
+    }).filter(function(x){ return x.date; });
+    return (state.portfolio.assetSnapshots || []).map(function(sn){
+      var add = 0;
+      prior.forEach(function(x){ if (x.date <= sn.date) add += x.amount; });
+      if (!add) return sn;
+      return {
+        date: sn.date, totalAsset: sn.totalAsset, unrealizedPL: sn.unrealizedPL,
+        realizedPL: round2((sn.realizedPL || 0) + add),
+        cumulativePL: round2((sn.cumulativePL || 0) + add)
+      };
     });
   }
   function monthlySnapshots(){
-    var sorted = state.portfolio.assetSnapshots.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    var sorted = snapshotsWithPriorRealized().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
     var map = {};
     sorted.forEach(function(s){
       var d = new Date(s.date);
@@ -1541,7 +1561,7 @@
     return Object.keys(map).sort().map(function(k){ return { key: k, snap: map[k] }; });
   }
   function yearlySnapshots(){
-    var sorted = state.portfolio.assetSnapshots.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    var sorted = snapshotsWithPriorRealized().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
     var map = {};
     sorted.forEach(function(s){
       map[new Date(s.date).getFullYear()] = s;
@@ -2773,6 +2793,10 @@
     (state.portfolio.manualRealized||[]).forEach(function(m){
       if (m.kind === "vr") priorVr += m.amount || 0; else priorOther += m.amount || 0;
     });
+    // The snapshot stores the recorded-trade figure only; prior-app entries are
+    // layered on when the snapshot is displayed, so storing them here too would
+    // count them twice on the 누적손익 graph.
+    var totalRealizedRecorded = vrRealizedTotal + manualRealizedTotal + muRealizedTotal;
     vrRealizedTotal += priorVr;
     var otherRealizedTotal = manualRealizedTotal + muRealizedTotal + priorOther;
     var totalRealized = vrRealizedTotal + otherRealizedTotal;
@@ -2827,7 +2851,7 @@
     var totalInvestedReal = (vrProfit!=null ? vrInvestedReal : 0) + otherCostTotal;
     var totalProfitAll = (vrProfit!=null ? vrProfit : 0) + otherProfit;
     var totalProfitAllPct = totalInvestedReal > 0 ? (totalProfitAll/totalInvestedReal*100) : null;
-    upsertTodaySnapshotIfMissing(grandTotal, totalProfitAll, totalRealized);
+    upsertTodaySnapshotIfMissing(grandTotal, totalProfitAll, totalRealizedRecorded);
 
     stats.innerHTML =
       stat("총 자산 (주식+예수금)", fmtCurrency(grandTotal)) +
@@ -3717,16 +3741,13 @@
         amount: round2(amount),
         memo: (document.getElementById("mrMemo").value || "").trim()
       });
-      refreshTodaySnapshotRealized(round2(amount));
       saveState();
       renderMain();
     });
     Array.prototype.forEach.call(card.querySelectorAll("[data-del]"), function(b){
       b.addEventListener("click", function(){
         var id = b.getAttribute("data-del");
-        var gone = state.portfolio.manualRealized.filter(function(m){ return m.id === id; })[0];
         state.portfolio.manualRealized = state.portfolio.manualRealized.filter(function(m){ return m.id !== id; });
-        if (gone) refreshTodaySnapshotRealized(-(gone.amount || 0));
         saveState();
         renderMain();
       });
