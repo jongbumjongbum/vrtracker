@@ -1518,6 +1518,19 @@
     snaps.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     saveState();
   }
+  // Today's snapshot is written once on the first Portfolio visit of the day and
+  // never overwritten, so adding prior-app realized P/L afterwards would leave
+  // today's 누적손익 point stale until tomorrow. Patch just that number in place;
+  // 총자산 keeps its first-check-of-the-day meaning.
+  function refreshTodaySnapshotRealized(delta){
+    if (!delta) return;
+    var today = todayStr();
+    (state.portfolio.assetSnapshots||[]).forEach(function(sn){
+      if (sn.date !== today) return;
+      sn.realizedPL = round2((sn.realizedPL || 0) + delta);
+      sn.cumulativePL = round2((sn.cumulativePL || 0) + delta);
+    });
+  }
   function monthlySnapshots(){
     var sorted = state.portfolio.assetSnapshots.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
     var map = {};
@@ -3704,13 +3717,16 @@
         amount: round2(amount),
         memo: (document.getElementById("mrMemo").value || "").trim()
       });
+      refreshTodaySnapshotRealized(round2(amount));
       saveState();
       renderMain();
     });
     Array.prototype.forEach.call(card.querySelectorAll("[data-del]"), function(b){
       b.addEventListener("click", function(){
         var id = b.getAttribute("data-del");
+        var gone = state.portfolio.manualRealized.filter(function(m){ return m.id === id; })[0];
         state.portfolio.manualRealized = state.portfolio.manualRealized.filter(function(m){ return m.id !== id; });
+        if (gone) refreshTodaySnapshotRealized(-(gone.amount || 0));
         saveState();
         renderMain();
       });
