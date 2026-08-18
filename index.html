@@ -2994,19 +2994,10 @@
     });
     var manualRealizedTotal = 0;
     manual.forEach(function(h){ manualRealizedTotal += h.realizedPL || 0; });
-    // Pre-app realized P/L typed in on the 손익 tab. It is P/L history only, so
-    // it belongs in these totals but never in cash or 총자산 below.
-    var priorVr = 0, priorOther = 0;
-    (state.portfolio.manualRealized||[]).forEach(function(m){
-      if (m.kind === "vr") priorVr += m.amount || 0; else priorOther += m.amount || 0;
-    });
-    // The snapshot stores the recorded-trade figure only; prior-app entries are
-    // layered on when the snapshot is displayed, so storing them here too would
-    // count them twice on the 누적손익 graph.
+    // The snapshot stores the recorded-trade figure only; the 손익 tab's typed-in
+    // pre-app entries are layered on when the snapshot is displayed, so storing
+    // them here too would count them twice on the 누적손익 graph.
     var totalRealizedRecorded = vrRealizedTotal + manualRealizedTotal + muRealizedTotal;
-    vrRealizedTotal += priorVr;
-    var otherRealizedTotal = manualRealizedTotal + muRealizedTotal + priorOther;
-    var totalRealized = vrRealizedTotal + otherRealizedTotal;
     var extraCash = state.portfolio.extraCash || 0;
     // 예수금은 VR Pool과 그외 예수금 둘로만 나눈다. 무매가 굴리는 현금도
     // 결국 같은 계좌의 그외 현금이라, 따로 더하면 직접 입력한 금액과 이중으로
@@ -3075,13 +3066,8 @@
         '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" class="cell-input" style="width:100%;" ' +
         'value="' + usdToInputValue(extraCash) + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
-      stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit)) +
-      stat("실현손익 합계 (VR+그외)" + realizedHint(totalRealized - priorVr - priorOther, priorVr + priorOther),
-           fmtCurrency(totalRealized), false, pfPnlColor(totalRealized)) +
-      stat("└ VR 실현손익" + realizedHint(vrRealizedTotal - priorVr, priorVr),
-           fmtCurrency(vrRealizedTotal), false, pfPnlColor(vrRealizedTotal)) +
-      stat("└ 그외 실현손익" + realizedHint(otherRealizedTotal - priorOther, priorOther),
-           fmtCurrency(otherRealizedTotal), false, pfPnlColor(otherRealizedTotal));
+      // 실현손익은 손익 탭이 기간까지 골라가며 훨씬 깔끔하게 보여줘서 여기선 뺐다.
+      stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit));
     mainArea.appendChild(stats);
 
     var extraCashInput = document.getElementById("extraCashInput");
@@ -3251,7 +3237,7 @@
     manCard.innerHTML = "<h3>직접 추가한 종목 (그외에 포함)</h3>" +
       '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.<br>' +
         '<b>실제로 사고판 건 아래 "매수/매도 기록 추가"로 넣어주세요.</b> 표의 수량·평단을 직접 고치면 예수금과 실현손익에는 반영되지 않아요 (입력 실수 정정용이에요).<br>' +
-        '표의 <b>실현손익 칸은 아래 매수/매도 기록으로 확정된 것만</b> 보여줘요 — 손익 탭에 직접 적은 "이 앱 쓰기 전 실현손익"은 여기 안 들어가고, 맨 위 "실현손익 합계"에만 더해져요.</div>' +
+        '표의 <b>실현손익 칸은 아래 매수/매도 기록으로 확정된 것만</b> 보여줘요 — 손익 탭에 직접 적은 "이 앱 쓰기 전 실현손익"은 여기 안 들어가요. 전체 실현손익은 <b>손익 탭</b>에서 기간을 "전체"로 놓고 보세요.</div>' +
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>' +
       '<h3 style="margin-top:20px;font-size:14px;">매수/매도 기록 추가</h3>' +
@@ -4212,14 +4198,6 @@
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
   }
 
-  // 포트폴리오의 실현손익 칸에는 손익 탭에서 직접 적은 "이 앱 쓰기 전 실현손익"이
-  // 같이 더해져 있다. 합계만 보면 그게 섞였는지 알 수 없어서, 섞였을 때는
-  // 라벨에 얼마씩인지 쪼개서 적어준다.
-  function realizedHint(recorded, prior){
-    if (!prior) return ' <span class="hint">앱에 기록한 매도만 · 직접 적은 과거분 없음</span>';
-    return ' <span class="hint">앱에 기록한 매도 ' + fmtCurrency(recorded) +
-      ' + 손익 탭에 직접 적은 과거분 ' + fmtCurrency(prior) + '</span>';
-  }
   function stat(label, value, isPlain, color){
     return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (isPlain?"":"num") + '"' +
       (color ? (' style="color:' + color + '"') : '') + '>' + value + '</div></div>';
