@@ -1,6 +1,16 @@
 <meta charset="utf-8" />
 <title>주식 기록</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- 홈 화면에 추가하면 주소창 없이 앱처럼 열린다 (안드로이드/크롬은 manifest,
+     아이폰 사파리는 apple- 계열 태그를 본다). -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#1B2430" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="주식기록" />
 <style>
   :root {
     --ink: #1B2430;
@@ -573,6 +583,9 @@
       <button class="btn btn-ghost btn-sm" id="exportBtn" type="button" style="flex:1">백업 내보내기</button>
       <button class="btn btn-ghost btn-sm" id="importBtn" type="button" style="flex:1">불러오기</button>
       <input type="file" id="importFile" accept="application/json" class="hidden" />
+    </div>
+    <div class="sidebar-foot" style="margin-top:8px;">
+      <button class="btn btn-ghost btn-sm" id="csvBtn" type="button" style="flex:1">거래내역 CSV 내보내기</button>
     </div>
   </aside>
 
@@ -1201,6 +1214,7 @@
       appReady = true;
       restoreDraft();
       updateRecoverBtn();
+      fetchFxRate(false, true);   // 무료·무제한 API라 켤 때 조용히 한 번 받아온다
 
       var cloud = await cloudLoad(currentUserId);
       if (cloud){
@@ -1604,6 +1618,7 @@
   // Applies a mutation to one holding's trade list and keeps 예수금 in step by
   // moving it by the difference between the old and new net cash effect.
   function mutateManualTrades(h, mutate){
+    if (!h.trades) h.trades = [];   // 예전 판본으로 만든 기록도 안전하게
     var seed = manualHoldingSeed(h);
     var before = replayManualHolding(h, seed);
     mutate(h.trades);
@@ -1672,15 +1687,16 @@
       if (!map[key]) map[key] = { vr: 0, other: 0 };
       map[key][kind] += amount;
     }
-    function addBoth(dateStr, kind, amount){
+    function addBoth(dateStr, kind, amount, ticker){
       var d = new Date(dateStr);
       var year = d.getFullYear();
       var month = year + "-" + pad(d.getMonth()+1);
       add(byYear, year, kind, amount);
       add(byMonth, month, kind, amount);
-      // Kept flat as well so an arbitrary date range (직접입력) can be summed
-      // without re-walking every instance.
-      events.push({ date: dateStr, kind: kind, amount: amount });
+      // Kept flat as well so an arbitrary date range (기간 지정) can be summed
+      // without re-walking every instance — and so the same list can be split
+      // by ticker, or written out to CSV, without a second walk.
+      events.push({ date: dateStr, kind: kind, amount: amount, ticker: (ticker || "?").toUpperCase() });
     }
     state.instances.forEach(function(inst){
       var qty = inst.initQty || 0, cost = qty * (inst.initPrice || 0);
@@ -1692,7 +1708,7 @@
           } else if (qty > 0){
             var avg = cost / qty;
             var sq = Math.min(f.qty, qty);
-            addBoth(c.date, "vr", sq * (f.price - avg));
+            addBoth(c.date, "vr", sq * (f.price - avg), inst.ticker);
             qty -= sq;
             cost = avg * Math.max(0, qty);
           }
@@ -1708,7 +1724,7 @@
           } else if (qty > 0){
             var avg = cost / qty;
             var sq = Math.min(f.qty, qty);
-            addBoth(d.date, "other", sq * (f.price - avg));
+            addBoth(d.date, "other", sq * (f.price - avg), inst.ticker);
             qty -= sq;
             cost = avg * Math.max(0, qty);
           }
@@ -1717,7 +1733,7 @@
     });
     state.portfolio.holdings.forEach(function(h){
       (h.trades||[]).forEach(function(t){
-        if (t.type === "sell") addBoth(t.date, "other", t.gain || 0);
+        if (t.type === "sell") addBoth(t.date, "other", t.gain || 0, h.ticker);
       });
     });
     // Realized P/L from before this app was used. Display only - it is never
@@ -1726,36 +1742,37 @@
     (state.portfolio.manualRealized||[]).forEach(function(m){
       var when = manualRealizedDate(m);
       if (!when || typeof m.amount !== "number") return;
-      addBoth(when, m.kind === "vr" ? "vr" : "other", m.amount);
+      addBoth(when, m.kind === "vr" ? "vr" : "other", m.amount, manualRealizedLabel(m));
     });
     return { byYear: byYear, byMonth: byMonth, events: events };
   }
 
-  // Records at most one snapshot per calendar day (never overwrites an
-  // existing one), so opening the Portfolio tab repeatedly in the same day
-  // doesn't spam saveState()/Supabase — the tradeoff is today's number is
-  // whatever it was on the FIRST check that day, which is fine for a
-  // month/year trend view.
-  function upsertTodaySnapshotIfMissing(totalAsset, unrealizedPL, realizedPL){
+  // One snapshot per calendar day, always holding the LATEST numbers seen that
+  // day. It used to freeze on the first check of the day, which meant the whole
+  // 총자산 graph was drawn from whatever stale quote happened to be cached when
+  // the tab was first opened — pressing 시세 새로고침 afterwards could never fix
+  // it. Writing only when a number actually moved keeps repeat renders from
+  // spamming saveState()/Supabase.
+  function upsertTodaySnapshot(totalAsset, unrealizedPL, realizedPL){
     var today = todayStr();
     var snaps = state.portfolio.assetSnapshots;
     var existing = snaps.filter(function(s){ return s.date === today; })[0];
-    if (existing){
-      // 총자산 stays as first seen today, but a realized figure that has moved
-      // since (a trade edited, or a stale value written by an older version)
-      // must not be left frozen on the 누적손익 graph.
-      var fresh = round2(realizedPL);
-      if (existing.realizedPL !== fresh){
-        existing.realizedPL = fresh;
-        existing.cumulativePL = round2((existing.unrealizedPL || 0) + fresh);
-        saveState();
-      }
-      return;
-    }
-    snaps.push({
+    var row = {
       date: today, totalAsset: round2(totalAsset), unrealizedPL: round2(unrealizedPL),
       realizedPL: round2(realizedPL), cumulativePL: round2(unrealizedPL + realizedPL)
-    });
+    };
+    if (existing){
+      if (existing.totalAsset === row.totalAsset &&
+          existing.unrealizedPL === row.unrealizedPL &&
+          existing.realizedPL === row.realizedPL) return;
+      existing.totalAsset = row.totalAsset;
+      existing.unrealizedPL = row.unrealizedPL;
+      existing.realizedPL = row.realizedPL;
+      existing.cumulativePL = row.cumulativePL;
+      saveState();
+      return;
+    }
+    snaps.push(row);
     snaps.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     saveState();
   }
@@ -1798,23 +1815,29 @@
     return Object.keys(map).sort().map(function(k){ return { key: k, snap: map[k] }; });
   }
 
-  async function fetchFxRate(force){
+  // quiet=true 는 앱을 켤 때 자동으로 한 번 받아오는 경우다. 이 API는 호출
+  // 한도가 없어서 자동 조회해도 부담이 없고, 이게 없으면 KRW 보기를 눌러도
+  // 사용자가 [환율 새로고침]을 따로 누르기 전까지 달러로만 보였다.
+  async function fetchFxRate(force, quiet){
     if (!force && state.fx && state.fx.updatedAt && (Date.now() - new Date(state.fx.updatedAt).getTime()) < 30*60*1000) return;
+    var ok = false;
     try {
       var res = await fetch("https://open.er-api.com/v6/latest/USD");
       var json = await res.json();
       if (json && json.rates && json.rates.KRW){
         state.fx = { usdkrw: json.rates.KRW, updatedAt: new Date().toISOString() };
-        priceFetchNote = { text: "환율을 새로 받아왔어요 (1 USD = " + json.rates.KRW.toFixed(2) + "원).", isError: false };
+        ok = true;
+        if (!quiet) priceFetchNote = { text: "환율을 새로 받아왔어요 (1 USD = " + json.rates.KRW.toFixed(2) + "원).", isError: false };
         saveState();
-      } else {
+      } else if (!quiet) {
         priceFetchNote = { text: "환율을 받아오지 못했어요. 잠시 후 다시 눌러주세요.", isError: true };
       }
     } catch(e){
       console.error("fx fetch failed", e);
-      priceFetchNote = { text: "환율 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", isError: true };
+      if (!quiet) priceFetchNote = { text: "환율 서버에 연결하지 못했어요. 인터넷 상태를 확인해주세요.", isError: true };
     }
-    if (state.viewMode === "portfolio") renderMainPreservingInput();
+    // 조용한 자동 조회라도 환율이 실제로 바뀌었으면 화면 숫자는 갱신돼야 한다.
+    if (state.viewMode === "portfolio" && (ok || !quiet)) renderMainPreservingInput();
   }
 
   var TWELVEDATA_KEY = "9d7a1fad48604a07874cb77f737f3557";
@@ -1996,6 +2019,17 @@
   }
   function rowOpenClass(key){ return openRows[key] ? " is-open" : ""; }
 
+  // el.innerHTML += html looks harmless but it re-parses everything already in
+  // the element. Any hand-built chart inside it comes back as fresh nodes with
+  // every listener stripped — which is exactly why the 손익 tab's graphs drew
+  // fine but stopped responding to taps. Append a sibling instead.
+  function appendHtml(el, html){
+    if (!html) return;
+    var box = document.createElement("div");
+    box.innerHTML = html;
+    while (box.firstChild) el.appendChild(box.firstChild);
+  }
+
   // 손익 탭의 긴 표들. 기본은 접힘이고, 편 상태는 openRows에 남겨서 시세가
   // 갱신되며 다시 그려져도 도로 닫히지 않게 한다.
   function foldedHtml(key, label, innerHtml){
@@ -2003,6 +2037,36 @@
     return '<details class="fold" data-fold="' + escapeHtml(key) + '"' +
       (openRows["fold:" + key] ? " open" : "") + '>' +
       '<summary>' + label + '</summary>' + innerHtml + '</details>';
+  }
+
+  /* --- 시세 새로고침 (탭 공용) ------------------------------------------------
+     조회는 사용자가 누를 때만 일어난다(무료 한도 하루 800회). 예전엔 이 버튼이
+     포트폴리오 탭에만 있어서, 실시간가로 평가금을 보여주는 무매·VR 탭에서는
+     정작 그 값을 갱신할 방법이 없었다. */
+  function priceRefreshBtnHtml(id){
+    return '<button class="btn btn-sm" id="' + id + '" type="button">시세 새로고침</button>';
+  }
+  function wirePriceRefreshBtn(id, tickers){
+    var b = document.getElementById(id);
+    if (!b) return;
+    b.addEventListener("click", function(){
+      b.disabled = true;
+      b.textContent = "조회 중…";
+      fetchLivePrices(tickers, true).then(function(){ renderMainPreservingInput(); });
+    });
+  }
+  // 마지막 조회 결과 안내 배너. 어느 탭에서 눌렀든 같은 자리에 뜬다.
+  function appendFetchNote(){
+    if (!priceFetchNote) return;
+    var note = document.createElement("div");
+    note.className = "fetch-note" + (priceFetchNote.isError ? " err" : "");
+    note.innerHTML = '<span>' + escapeHtml(priceFetchNote.text) + '</span>' +
+      '<button type="button" class="btn btn-sm btn-ghost" id="fetchNoteClose">닫기</button>';
+    mainArea.appendChild(note);
+    document.getElementById("fetchNoteClose").addEventListener("click", function(){
+      priceFetchNote = null;
+      renderMainPreservingInput();
+    });
   }
 
   // A phone can throw the whole tab away while the user is in another app; when
@@ -2158,7 +2222,7 @@
       card.className = "instance-card" + (inst.id === state.selectedId && state.viewMode === "vr" ? " active" : "");
       var progress = inst.goalAmount ? Math.min(100, (tot/inst.goalAmount)*100) : null;
       card.innerHTML =
-        '<div class="row1"><span class="iname">' + escapeHtml(inst.name) + '</span>' + typeChip(seg.type) + '</div>' +
+        '<div class="row1"><span class="iname">' + escapeHtml(inst.name) + '</span>' + typeChip(seg.type) + cycleDueChip(inst, last) + '</div>' +
         '<div class="meta"><span>' + escapeHtml(inst.ticker) + '</span><span class="num">' + fmtMoney0(tot) + '</span></div>' +
         (progress != null ? '<div class="progress-track"><div class="progress-fill" style="width:' + progress.toFixed(0) + '%"></div></div>' : '');
       card.addEventListener("click", function(){ state.selectedId = inst.id; state.viewMode = "vr"; saveState(); render(); });
@@ -2302,6 +2366,7 @@
         '</div>' +
         historyStepperHtml(inst.cycles, vrHistIdx, "사이클") + '</div>' +
         '<div class="head-actions">' +
+          priceRefreshBtnHtml("vrPriceRefreshBtn") +
           '<button class="btn btn-sm" id="poolLimitBtn" type="button">Pool 한도 설정</button>' +
           '<button class="btn btn-sm" id="switchTypeBtn" type="button">운용방식 전환</button>' +
           '<button class="btn btn-sm btn-ghost btn-danger" id="deleteInstBtn" type="button">삭제</button>' +
@@ -2309,6 +2374,9 @@
       '</div>';
     mainArea.appendChild(head);
     wireHistoryStepper(inst.id, inst.cycles);
+    wirePriceRefreshBtn("vrPriceRefreshBtn", [inst.ticker]);
+    appendFetchNote();
+    if (!viewingPast) appendCycleDueBanner(inst, lastState(inst));
     if (viewingPast){
       var vrBanner = document.createElement("div");
       vrBanner.innerHTML = historyBannerHtml(last.date);
@@ -2518,6 +2586,37 @@
       });
     });
 
+    Array.prototype.forEach.call(histCard.querySelectorAll(".cyc-edit"), function(btn){
+      btn.addEventListener("click", function(){
+        var cid = btn.closest("tr").getAttribute("data-cycle-id");
+        var c = inst.cycles.find(function(x){ return x.id === cid; });
+        if (!c) return;
+        var ds = prompt("사이클 시작일 (YYYY-MM-DD)", c.date);
+        if (ds === null) return;
+        var ps = prompt("마감일 종가 ($)", String(c.price));
+        if (ps === null) return;
+        var seg2 = currentSegment(inst, c.date);
+        var depLabel = seg2.type === "인출식" ? "이번에 뺀 돈 ($, 양수)" : "이번에 새로 넣은 돈 ($)";
+        var dep0 = seg2.type === "인출식" ? Math.abs(c.deposit || 0) : (c.deposit || 0);
+        var deps = prompt(depLabel, String(dep0));
+        if (deps === null) return;
+        var nd = ds.trim(), np = parseFloat(ps), ndep = parseFloat(deps);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nd) || isNaN(np) || np <= 0 || isNaN(ndep)){
+          alert("날짜는 YYYY-MM-DD 형식, 종가는 0보다 큰 숫자, 금액은 숫자여야 해요.");
+          return;
+        }
+        c.date = nd;
+        c.price = np;
+        c.deposit = currentSegment(inst, nd).type === "인출식" ? -Math.abs(ndep) : ndep;
+        inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+        replayCycles(inst);
+        delete historyView[inst.id];
+        delete sellLadderExpand[inst.id];
+        saveState();
+        render();
+      });
+    });
+
     // wire events
     document.getElementById("poolLimitBtn").addEventListener("click", function(){ openPoolLimitModal(inst); });
     document.getElementById("switchTypeBtn").addEventListener("click", function(){ openSwitchTypeModal(inst); });
@@ -2619,10 +2718,20 @@
       if (pendingFills.length && fills.length !== pendingFills.length){
         if (!confirm("수량이나 가격이 비어있는 체결 항목이 있어요. 그건 빼고 기록할까요?")) return;
       }
+      // 마지막 기록보다 앞선 날짜를 넣으면 이 기록은 중간에 끼어들어간다. 그러면
+      // 뒤 기록들의 V·Pool·밴드가 전부 다시 계산돼야 하는데, 예전엔 정렬만 하고
+      // 넘어가서 그 뒤 숫자가 조용히 틀린 채로 남았다.
+      var lastDate = inst.cycles.length ? inst.cycles[inst.cycles.length-1].date : null;
+      var inserting = !!(lastDate && date < lastDate);
+      if (inserting){
+        if (!confirm("입력한 날짜(" + fmtDate(date) + ")가 마지막 기록(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
+          "이 기록을 중간에 끼워 넣고, 뒤에 있는 사이클들의 V·Pool·밴드를 전부 다시 계산할까요?")) return;
+      }
       var res = computeCycle(inst, last, {date:date, closePrice:close, fills:fills, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
       applyFillsToRealAvgCost(inst, fills, last.qty);
       inst.cycles.push(res);
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+      replayCycles(inst);
       currentSegment(inst, date).gDeferred = false;
       delete sellLadderExpand[inst.id];
       delete historyView[inst.id];
@@ -2687,11 +2796,14 @@
     var inst = state.muInstances.find(function(i){ return i.id === state.muSelectedId; });
     if (!inst){
       if (state.muInstances.length){
+        appendFetchNote();
         renderMuTodayGuide();
         var hint = document.createElement("div");
         hint.className = "footnote";
-        hint.textContent = "위 카드를 누르거나 왼쪽 목록에서 무매를 선택하면 자세히 볼 수 있어요.";
+        hint.innerHTML = '위 카드를 누르거나 왼쪽 목록에서 무매를 선택하면 자세히 볼 수 있어요. ' +
+          priceRefreshBtnHtml("muGuidePriceRefreshBtn");
         mainArea.appendChild(hint);
+        wirePriceRefreshBtn("muGuidePriceRefreshBtn", state.muInstances.map(function(m){ return m.ticker; }));
         return;
       }
       mainArea.innerHTML =
@@ -2719,11 +2831,14 @@
           ((inst.initQty > 0) ? (' · 중간진입 ' + inst.initQty + '주 @ ' + fmtMoney(inst.initAvgCost) + ' (T ' + (inst.initT||0) + ')') : '') + '</div>' +
         historyStepperHtml(inst.days, histIdx, "일차") + '</div>' +
         '<div class="head-actions">' +
+          priceRefreshBtnHtml("muPriceRefreshBtn") +
           '<button class="btn btn-sm btn-ghost btn-danger" id="deleteMuBtn" type="button">삭제</button>' +
         '</div>' +
       '</div>';
     mainArea.appendChild(head);
     wireHistoryStepper(inst.id, inst.days);
+    wirePriceRefreshBtn("muPriceRefreshBtn", state.muInstances.map(function(m){ return m.ticker; }));
+    appendFetchNote();
     if (viewingPast){
       var banner = document.createElement("div");
       banner.innerHTML = historyBannerHtml(last.date);
@@ -2820,9 +2935,14 @@
     histCard.className = "card";
     histCard.innerHTML = "<h3>기록</h3>" + renderMuHistoryTable(inst);
     mainArea.appendChild(histCard);
+    wireMuHistoryActions(histCard, inst);
 
     document.getElementById("deleteMuBtn").addEventListener("click", function(){
-      if (confirm(inst.name + "을(를) 삭제할까요? 되돌릴 수 없어요.")){
+      // 기록만 없애고 "그외 예수금"은 건드리지 않는다 — 기록을 지운다고 이미
+      // 오간 돈이 계좌로 돌아오는 건 아니어서다. 다만 변동내역에서 줄이 사라지니
+      // 숫자가 안 맞아 보일 수 있어 미리 말해준다.
+      if (confirm(inst.name + "을(를) 삭제할까요? 되돌릴 수 없어요.\n\n" +
+        '"그외 예수금" 금액은 그대로 둬요 (실제로 오간 돈이라서요). 변동내역에서만 이 무매 줄이 사라지니, 필요하면 예수금을 직접 맞춰주세요.')){
         state.muInstances = state.muInstances.filter(function(i){ return i.id !== inst.id; });
         state.muSelectedId = state.muInstances.length ? state.muInstances[0].id : null;
         saveState(); render();
@@ -3033,11 +3153,18 @@
       if (pendingFills.length && input.fills.length !== pendingFills.length){
         if (!confirm("수량/가격이 비어있는 체결 항목은 빼고 기록할까요?")) return;
       }
+      var lastDate = inst.days.length ? inst.days[inst.days.length-1].date : null;
+      if (lastDate && input.date < lastDate){
+        if (!confirm("입력한 날짜(" + fmtDate(input.date) + ")가 마지막 기록(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
+          "이 기록을 중간에 끼워 넣고, 뒤에 있는 날들의 T·수량·평단·잔금을 전부 다시 계산할까요?")) return;
+      }
       var res = computeMuDay(inst, last, input);
-      inst.days.push(res);
-      inst.days.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-      inst.realizedPL = res.realizedPL;
-      inst.mode = res.mode;
+      // 이 체결만큼 계좌 현금도 실제로 움직이니 "그외 예수금"에 반영한다.
+      res.cashApplied = true;
+      mutateMuDays(inst, function(){
+        inst.days.push(res);
+        inst.days.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+      });
       delete historyView[inst.id];
       pendingFills.length = 0;
       clearDraft();
@@ -3056,7 +3183,7 @@
         ? [buyN?("매수 "+buyN+"건"):null, sellN?("매도 "+sellN+"건"):null].filter(Boolean).join(" · ")
         : "–";
       var modeTxt = d.mode==="reverse" ? "리버스" : (d.half==="back"?"후반전":"전반전");
-      return '<tr>' +
+      return '<tr data-day-id="' + d.id + '">' +
         '<td data-label="날짜">' + fmtDate(d.date) + '</td>' +
         '<td data-label="모드">' + modeTxt + '</td>' +
         '<td data-label="체결내역">' + fillsTxt + '</td>' +
@@ -3066,11 +3193,61 @@
         '<td class="num" data-label="평단">' + (d.avgCost>0?fmtMoney(d.avgCost):"–") + '</td>' +
         '<td class="num" data-label="잔금">' + fmtMoney0(d.cash) + '</td>' +
         '<td class="num" data-label="실현손익">' + fmtMoney0(d.realizedPL) + '</td>' +
+        '<td class="col-action">' +
+          '<button type="button" class="btn btn-sm btn-ghost mu-day-edit">수정</button> ' +
+          '<button type="button" class="btn btn-sm btn-ghost btn-danger mu-day-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
-      '<th>날짜</th><th>모드</th><th>체결내역</th><th class="num">종가</th><th class="num">T</th><th class="num">수량</th><th class="num">평단</th><th class="num">잔금</th><th class="num">실현손익</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<th>날짜</th><th>모드</th><th>체결내역</th><th class="num">종가</th><th class="num">T</th><th class="num">수량</th><th class="num">평단</th><th class="num">잔금</th><th class="num">실현손익</th><th class="col-action"></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="footnote" style="margin-top:6px;">[수정]은 날짜와 종가만 고쳐요. 체결내역(수량·가격)을 바꾸려면 그 줄을 삭제하고 다시 입력해주세요. 어느 쪽이든 뒤 기록의 T·수량·평단·잔금은 자동으로 다시 계산돼요.</div>';
+  }
+
+  // 무매 기록 한 줄을 고치거나 지운다. 어느 쪽이든 그 뒤 기록 전부가 다시
+  // 계산되고, 체결이 있었던 줄이면 "그외 예수금"도 같이 되돌아간다.
+  function wireMuHistoryActions(host, inst){
+    Array.prototype.forEach.call(host.querySelectorAll(".mu-day-del"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.closest("tr").getAttribute("data-day-id");
+        var idx = inst.days.findIndex(function(d){ return d.id === id; });
+        if (idx === -1) return;
+        var target = inst.days[idx];
+        var after = inst.days.length - 1 - idx;
+        var msg = fmtDate(target.date) + " 기록을 삭제할까요?";
+        if (after > 0) msg += "\n\n뒤에 있는 " + after + "개 기록의 T·수량·평단·잔금이 이 기록을 기준으로 계산돼 있어서, 삭제 후 자동으로 다시 계산돼요.";
+        if (target.cashApplied && (target.fills||[]).length) msg += "\n\n이 날의 체결만큼 \"그외 예수금\"도 원래대로 돌아가요.";
+        if (!confirm(msg)) return;
+        mutateMuDays(inst, function(){ inst.days.splice(idx, 1); });
+        delete historyView[inst.id];
+        saveState();
+        render();
+      });
+    });
+    Array.prototype.forEach.call(host.querySelectorAll(".mu-day-edit"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.closest("tr").getAttribute("data-day-id");
+        var d = inst.days.find(function(x){ return x.id === id; });
+        if (!d) return;
+        var ds = prompt("날짜 (YYYY-MM-DD)", d.date);
+        if (ds === null) return;
+        var cs = prompt("종가 ($)", String(d.close));
+        if (cs === null) return;
+        var nd = ds.trim(), nc = parseFloat(cs);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nd) || isNaN(nc) || nc <= 0){
+          alert("날짜는 YYYY-MM-DD 형식, 종가는 0보다 큰 숫자여야 해요.");
+          return;
+        }
+        mutateMuDays(inst, function(){
+          d.date = nd;
+          d.close = nc;
+          inst.days.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+        });
+        delete historyView[inst.id];
+        saveState();
+        render();
+      });
+    });
   }
 
   function renderPortfolio(){
@@ -3162,17 +3339,7 @@
       : "환율 정보를 아직 못 가져왔어요. 지금은 USD로만 정확히 표시돼요 — 환율 새로고침을 눌러보세요.";
     mainArea.appendChild(fxNote);
 
-    if (priceFetchNote){
-      var note = document.createElement("div");
-      note.className = "fetch-note" + (priceFetchNote.isError ? " err" : "");
-      note.innerHTML = '<span>' + escapeHtml(priceFetchNote.text) + '</span>' +
-        '<button type="button" class="btn btn-sm btn-ghost" id="fetchNoteClose">닫기</button>';
-      mainArea.appendChild(note);
-      document.getElementById("fetchNoteClose").addEventListener("click", function(){
-        priceFetchNote = null;
-        renderMainPreservingInput();
-      });
-    }
+    appendFetchNote();
 
     var stats = document.createElement("div");
     stats.className = "stat-strip";
@@ -3181,7 +3348,7 @@
     var totalInvestedReal = (vrProfit!=null ? vrInvestedReal : 0) + otherCostTotal;
     var totalProfitAll = (vrProfit!=null ? vrProfit : 0) + otherProfit;
     var totalProfitAllPct = totalInvestedReal > 0 ? (totalProfitAll/totalInvestedReal*100) : null;
-    upsertTodaySnapshotIfMissing(grandTotal, totalProfitAll, totalRealizedRecorded);
+    upsertTodaySnapshot(grandTotal, totalProfitAll, totalRealizedRecorded);
 
     stats.innerHTML =
       stat("총 자산 (주식+예수금)", fmtCurrency(grandTotal)) +
@@ -3231,37 +3398,73 @@
         });
       });
     });
+    // 무매 체결도 같은 계좌의 현금을 움직인다. cashApplied 가 붙은 날 —
+    // 예수금 자동 반영이 생긴 뒤에 기록한 날 — 만 넣는다. 그 전 기록들은
+    // 사용자가 이미 손으로 맞춰둔 잔액에 녹아 있어서 여기 또 세면 안 맞는다.
+    state.muInstances.forEach(function(m){
+      (m.days||[]).forEach(function(d){
+        if (!d.cashApplied) return;
+        (d.fills||[]).forEach(function(f){
+          derivedCashRows.push({
+            date: d.date,
+            kind: f.type === "buy" ? "매수" : "매도",
+            amount: (f.type === "buy" ? -1 : 1) * f.qty * f.price,
+            note: "무매 " + m.ticker + " " + f.qty + "주 " + (f.type === "buy" ? "매수" : "매도")
+          });
+        });
+      });
+    });
     var allCashRows = state.portfolio.cashLog
       .filter(function(e){ return e.kind === "입금" || e.kind === "출금"; })
+      .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: true }; })
       .concat(derivedCashRows)
       .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     var cashLogRows = allCashRows.slice().reverse().map(function(e){
       var color = e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)");
       return '<tr><td data-label="날짜">' + fmtDate(e.date) + '</td><td data-label="구분">' + escapeHtml(e.kind) + '</td>' +
         '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtCurrency(e.amount) + '</td>' +
-        '<td data-label="메모">' + escapeHtml(e.note||"") + '</td></tr>';
+        '<td data-label="메모">' + escapeHtml(e.note||"") + '</td>' +
+        '<td class="col-action">' + (e.canDelete
+          ? ('<button type="button" class="btn btn-sm btn-ghost btn-danger cash-del" data-id="' + e.id + '">삭제</button>')
+          : '<span class="footnote">자동</span>') + '</td></tr>';
     }).join("");
     cashLogCard.innerHTML = "<h3>VR 외 예수금 변동내역</h3>" +
-      '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. 아래 "직접 추가한 종목"에서 매수/매도를 기록해도 여기 자동으로 남아요.</div>' +
-      '<div class="form-grid" style="grid-template-columns:repeat(3,1fr);align-items:end;">' +
+      '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. "직접 추가한 종목"과 "무매"에서 매수/매도를 기록해도 여기 자동으로 남아요 — 자동으로 생긴 줄은 그 기록을 고치면 같이 바뀌니 여기서 따로 지울 수 없어요.</div>' +
+      '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);align-items:end;">' +
         field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
         field("금액 (" + curSymbol() + ")", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" />') +
+        field("날짜", '<input id="cashLogDate" type="date" autocomplete="off" value="' + todayStr() + '" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
       '</div>' +
-      (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
+      (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th><th class="col-action"></th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
         : '<div class="chart-empty" style="margin-top:14px;">아직 기록이 없어요.</div>');
     mainArea.appendChild(cashLogCard);
 
     document.getElementById("cashLogAddBtn").addEventListener("click", function(){
       var type = document.getElementById("cashLogType").value;
       var amt = parseFloat(document.getElementById("cashLogAmount").value);
+      var when = document.getElementById("cashLogDate").value || todayStr();
       if (isNaN(amt) || amt <= 0){ alert("금액을 입력해주세요."); return; }
       var usd = inputValueToUsd(amt);
       var signed = type === "in" ? usd : -usd;
-      state.portfolio.extraCash = (state.portfolio.extraCash||0) + signed;
-      pushCashLog(type === "in" ? "입금" : "출금", signed, todayStr(), "");
+      state.portfolio.extraCash = round4((state.portfolio.extraCash||0) + signed);
+      pushCashLog(type === "in" ? "입금" : "출금", signed, when, "");
       saveState();
       renderMain();
+    });
+    // 잘못 넣은 입금/출금은 지울 수 있어야 한다. 지우면 그 금액만큼 예수금도
+    // 원래대로 되돌린다.
+    Array.prototype.forEach.call(cashLogCard.querySelectorAll(".cash-del"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.getAttribute("data-id");
+        var e = state.portfolio.cashLog.find(function(x){ return x.id === id; });
+        if (!e) return;
+        if (!confirm(fmtDate(e.date) + " " + e.kind + " " + fmtCurrency(Math.abs(e.amount)) + " 기록을 지울까요?\n\n그만큼 \"그외 예수금\"도 원래대로 돌아가요.")) return;
+        state.portfolio.extraCash = round4((state.portfolio.extraCash||0) - e.amount);
+        state.portfolio.cashLog = state.portfolio.cashLog.filter(function(x){ return x.id !== id; });
+        saveState();
+        renderMain();
+      });
     });
 
     // Value and cost basis per ticker, so each donut slice can also report its
@@ -3310,9 +3513,9 @@
       .sort(function(a,b){ return b.value - a.value; });
     var MAX_TICKER_SLICES = 7;
     if (allocSlices.length > MAX_TICKER_SLICES){
-      var head = allocSlices.slice(0, MAX_TICKER_SLICES);
+      var topSlices = allocSlices.slice(0, MAX_TICKER_SLICES);
       var restSum = allocSlices.slice(MAX_TICKER_SLICES).reduce(function(s,x){ return s+x.value; }, 0);
-      allocSlices = head.concat([{ label: "기타", value: restSum }]);
+      allocSlices = topSlices.concat([{ label: "기타", value: restSum }]);
     }
     if (cashTotal > 0) allocSlices.push({ label: "예수금", value: cashTotal, isCash: true });
 
@@ -3435,9 +3638,6 @@
           t.qty = nq; t.price = np; t.date = ds.trim(); t.type = nt;
           trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
         });
-        var rec = (f.h.trades||[]).find(function(x){ return x.id === f.t.id; });
-        if (rec){
-        }
         saveState();
         renderMain();
       });
@@ -3461,9 +3661,9 @@
         });
         var rec = h.trades.find(function(t){ return t.id === tradeId; });
         h.currentPrice = price;
-        if (type === "buy"){
-        } else {
-          if (rec.qty < qty){ alert("보유수량보다 많이 입력해서 " + rec.qty + "주만 매도로 기록했어요."); }
+        // 매도는 보유수량까지만 기록된다 (replayManualHolding이 잘라낸다).
+        if (type === "sell" && rec && rec.qty < qty){
+          alert("보유수량보다 많이 입력해서 " + rec.qty + "주만 매도로 기록했어요.");
         }
         saveState();
         renderMain();
@@ -3483,7 +3683,10 @@
     });
     document.getElementById("addHoldingBtn").addEventListener("click", function(){
       var newId = uid();
-      state.portfolio.holdings.push({ id: newId, ticker: "", qty: 0, avgCost: 0, currentPrice: 0 });
+      // trades/realizedPL 을 여기서 같이 만들어 준다. normalizeState() 가
+      // 채워주긴 하지만 그건 전체 render() 때만 돌아서, 종목을 추가한 직후
+      // 곧바로 매매를 기록하면 trades 가 없는 채로 걸려 넘어졌다.
+      state.portfolio.holdings.push({ id: newId, ticker: "", qty: 0, avgCost: 0, currentPrice: 0, trades: [], realizedPL: 0 });
       // A brand-new row is empty, so it has to come up already open — otherwise
       // the user taps 종목 추가 and gets a closed "새 종목" line with nowhere to type.
       openRows["hold:" + newId] = true;
@@ -3815,16 +4018,36 @@
       default:            return { from: null, to: null };
     }
   }
+  function inRange(dateStr, range){
+    if (range.from && dateStr < range.from) return false;
+    if (range.to && dateStr > range.to) return false;
+    return true;
+  }
   function sumRealizedInRange(events, range){
     var vr = 0, other = 0, n = 0;
     events.forEach(function(e){
-      var d = e.date;
-      if (range.from && d < range.from) return;
-      if (range.to && d > range.to) return;
+      if (!inRange(e.date, range)) return;
       if (e.kind === "vr") vr += e.amount; else other += e.amount;
       n++;
     });
     return { vr: vr, other: other, total: vr + other, count: n };
+  }
+  // 같은 기간을 종목별로도 쪼갠다 — 합계만 보면 어떤 종목이 벌었고 어떤 종목이
+  // 까먹었는지가 안 보여서, 다음 판단에 쓸 수가 없다. 많이 번 순으로 정렬한다.
+  function realizedByTickerInRange(events, range){
+    var map = {};
+    events.forEach(function(e){
+      if (!inRange(e.date, range)) return;
+      var t = e.ticker || "?";
+      if (!map[t]) map[t] = { ticker: t, vr: 0, other: 0, count: 0 };
+      if (e.kind === "vr") map[t].vr += e.amount; else map[t].other += e.amount;
+      map[t].count++;
+    });
+    return Object.keys(map).map(function(k){
+      var r = map[k];
+      r.total = r.vr + r.other;
+      return r;
+    }).sort(function(a,b){ return b.total - a.total; });
   }
 
   function renderPnL(){
@@ -3854,7 +4077,8 @@
           '</div>')
         : '') +
       '<div class="footnote" id="pnlRangeFoot" style="margin-top:8px;"></div>' +
-      '<div class="stat-strip" id="pnlRangeStats" style="margin-top:12px;"></div>';
+      '<div class="stat-strip" id="pnlRangeStats" style="margin-top:12px;"></div>' +
+      '<div id="pnlRangeByTicker" style="margin-top:12px;"></div>';
     mainArea.appendChild(rangeCard);
     // The summary is repainted in place (never via renderMain) so that typing or
     // scrolling a mobile date picker - which fires "change" on every spin - does
@@ -3875,6 +4099,24 @@
           stat("합계", fmtCurrency(sum.total), false, pnlRowColor(sum.total)) +
           stat("VR", fmtCurrency(sum.vr), false, pnlRowColor(sum.vr)) +
           stat("그외", fmtCurrency(sum.other), false, pnlRowColor(sum.other));
+      }
+      var byTickerHost = document.getElementById("pnlRangeByTicker");
+      if (byTickerHost){
+        var rows = realizedByTickerInRange(pnlBuckets0.events, r);
+        if (!rows.length){
+          byTickerHost.innerHTML = '<div class="chart-empty">이 기간에는 확정된 손익이 없어요.</div>';
+        } else {
+          byTickerHost.innerHTML = '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
+            '<th>종목</th><th class="num">VR</th><th class="num">그외</th><th class="num">합계</th></tr></thead><tbody>' +
+            rows.map(function(x){
+              return '<tr><td data-label="종목">' + escapeHtml(x.ticker) + '</td>' +
+                '<td class="num" data-label="VR" style="color:' + pnlRowColor(x.vr) + '">' + (x.vr ? fmtCurrency(x.vr) : "–") + '</td>' +
+                '<td class="num" data-label="그외" style="color:' + pnlRowColor(x.other) + '">' + (x.other ? fmtCurrency(x.other) : "–") + '</td>' +
+                '<td class="num" data-label="합계" style="color:' + pnlRowColor(x.total) + '">' + fmtCurrency(x.total) + '</td></tr>';
+            }).join("") +
+            '</tbody></table></div>' +
+            '<div class="footnote" style="margin-top:6px;">같은 티커를 VR과 무매로 함께 굴렸으면 한 줄에 나뉘어 나와요.</div>';
+        }
       }
     }
     paintRangeSummary();
@@ -3912,7 +4154,7 @@
     var assetCard = document.createElement("div");
     assetCard.className = "card";
     assetCard.innerHTML = "<h3>총자산 증감 (월별)</h3>" +
-      '<div class="card-desc">포트폴리오 탭을 연 날마다 그날 첫 확인 시점의 총자산을 자동으로 기록해요. 해가 바뀌어도 하나의 그래프로 계속 이어져요.</div>' +
+      '<div class="card-desc">포트폴리오 탭을 연 날마다 총자산이 자동으로 기록돼요 — 그날 <b>마지막으로 확인한</b> 값이라, 시세를 새로 받아오면 오늘 값도 같이 갱신돼요. 해가 바뀌어도 하나의 그래프로 계속 이어져요.</div>' +
       '<div id="assetChartHost"></div>';
     mainArea.appendChild(assetCard);
     renderSimpleLineChart(
@@ -3930,8 +4172,8 @@
           '<td class="num" data-label="전월대비" style="color:' + (delta==null?"var(--ink-soft)":pnlRowColor(delta)) + '">' + (delta==null?"–":((delta>0?"+":"")+fmtCurrency(delta))) + '</td>' +
           '</tr>';
       }).join("");
-      assetCard.innerHTML += foldedHtml("asset", "월별 숫자로 보기 (" + monthly.length + "개월)",
-        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>');
+      appendHtml(assetCard, foldedHtml("asset", "월별 숫자로 보기 (" + monthly.length + "개월)",
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">총자산</th><th class="num">전월대비</th></tr></thead><tbody>' + assetRows + '</tbody></table></div>'));
     }
 
     var buckets = pnlBuckets0;
@@ -3981,8 +4223,8 @@
       var pnlMonthRows = monthly.map(function(m){
         return '<tr><td data-label="월">' + m.key + '</td><td class="num" data-label="누적손익" style="color:' + pnlRowColor(m.snap.cumulativePL) + '">' + fmtCurrency(m.snap.cumulativePL) + '</td></tr>';
       }).join("");
-      pnlMonthCard.innerHTML += foldedHtml("pnlMonth", "월별 숫자로 보기 (" + monthly.length + "개월)",
-        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlMonthRows + '</tbody></table></div>');
+      appendHtml(pnlMonthCard, foldedHtml("pnlMonth", "월별 숫자로 보기 (" + monthly.length + "개월)",
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>월</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlMonthRows + '</tbody></table></div>'));
     }
 
     var yearly = yearlySnapshots();
@@ -4001,7 +4243,8 @@
       var pnlYearRows = yearly.map(function(y){
         return '<tr><td data-label="연도">' + y.key + '년</td><td class="num" data-label="누적손익" style="color:' + pnlRowColor(y.snap.cumulativePL) + '">' + fmtCurrency(y.snap.cumulativePL) + '</td></tr>';
       }).join("");
-      pnlYearCard.innerHTML += '<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>연도</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlYearRows + '</tbody></table></div>';
+      appendHtml(pnlYearCard, foldedHtml("pnlYear", "연도별 숫자로 보기 (" + yearly.length + "년)",
+        '<div class="table-wrap"><table class="stack-mobile"><thead><tr><th>연도</th><th class="num">누적손익</th></tr></thead><tbody>' + pnlYearRows + '</tbody></table></div>'));
     }
 
     if (!state.portfolio.assetSnapshots.length){
@@ -4319,6 +4562,46 @@
     var start = (last && last.date) ? last.date : inst.initDate;
     return { start: start, end: addDaysStr(start, inst.cycleDays) };
   }
+  // 지금 돌고 있는 사이클의 마감일까지 남은 날짜. 0이면 오늘이 마감일,
+  // 음수면 지났다는 뜻이다. 날짜 문자열끼리만 비교하므로 시분초는 안 섞인다.
+  function cycleDueInfo(inst, last){
+    var win = currentCycleWindow(inst, last);
+    var daysLeft = Math.round(daysBetween(todayStr(), win.end));
+    return { end: win.end, daysLeft: daysLeft, due: daysLeft <= 0 };
+  }
+  // 사이클은 자동으로 넘어가지 않고 사용자가 마감을 눌러야 다음이 열린다.
+  // 그래서 마감일이 왔는지를 앱이 먼저 알려주지 않으면 그냥 지나가버린다.
+  function appendCycleDueBanner(inst, last){
+    var info = cycleDueInfo(inst, last);
+    if (info.daysLeft > 1) return;
+    var el = document.createElement("div");
+    el.className = "card";
+    el.style.borderColor = info.due ? "var(--sell)" : "var(--accent)";
+    var msg = info.daysLeft === 0 ? "<b>오늘이 이 사이클 마감일이에요.</b>"
+      : (info.daysLeft < 0 ? ("<b>마감일이 " + (-info.daysLeft) + "일 지났어요.</b>")
+      : "<b>내일이 이 사이클 마감일이에요.</b>");
+    el.innerHTML = '<h3>사이클 마감 알림</h3>' +
+      '<div class="card-desc">' + msg + ' (' + fmtDate(info.end) + ') ' +
+        '아래 <b>②③</b>에 체결내역과 마감일 종가를 넣고 마감하면 다음 사이클이 열려요.</div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;">' +
+        '<button class="btn btn-primary btn-sm" id="goCloseBtn" type="button">지금 마감하러 가기</button></div>';
+    mainArea.appendChild(el);
+    document.getElementById("goCloseBtn").addEventListener("click", function(){
+      var target = document.getElementById("cy_close");
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(function(){ target.focus(); }, 250);
+    });
+  }
+  // 사이드바 목록에 붙는 짧은 표시 — 어떤 VR이 마감을 기다리는지 열어보지
+  // 않고도 알 수 있게.
+  function cycleDueChip(inst, last){
+    var info = cycleDueInfo(inst, last);
+    if (info.daysLeft > 3) return "";
+    var txt = info.daysLeft === 0 ? "오늘 마감"
+      : (info.daysLeft < 0 ? ("마감 " + (-info.daysLeft) + "일 지남") : ("D-" + info.daysLeft));
+    return '<span class="chip ' + (info.due ? "chip-withdraw" : "chip-lump") + '">' + txt + '</span>';
+  }
   function addDaysStr(dateStr, days){
     var d = new Date(new Date(dateStr).getTime() + days*86400000);
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
@@ -4543,8 +4826,67 @@
       fills: (input.fills||[]).map(function(f){ return {type:f.type, qty:f.qty, price:f.price}; }),
       T: T, mode: mode, half: half, reverseFirstDay: reverseFirstDay,
       qty: qty, avgCost: avgCost, cash: round2(cash), value: round2(qty*input.close),
-      realizedPL: round2(prev.realizedPL + realizedGain)
+      realizedPL: round2(prev.realizedPL + realizedGain),
+      // 다시 계산(replayMuDays)할 때 그날 사용자가 실제로 준 입력을 그대로
+      // 되먹여야 같은 결과가 나온다. v:2 는 이 두 값을 저장하기 시작한 판본
+      // 표시로, 그 전 기록은 T를 건드리지 않고 그대로 둔다.
+      v: 2,
+      tOverride: (input.tOverride != null && !isNaN(input.tOverride)) ? input.tOverride : null,
+      exhausted: !!input.exhausted
     };
+  }
+
+  // 무매 기록도 VR 사이클처럼 앞 기록에서 뒤 기록이 파생된다 (T·수량·평단·잔금).
+  // 그래서 중간에 하나를 끼워 넣거나 지우면 그 뒤가 전부 무효가 된다 — 씨앗
+  // 상태부터 각 기록의 원래 입력값으로 다시 굴려 앞뒤를 맞춘다.
+  function replayMuDays(inst){
+    var prev = muInstanceInit(inst);
+    inst.days = inst.days.map(function(d){
+      var res = computeMuDay(inst, prev, {
+        date: d.date,
+        close: d.close,
+        fills: d.fills || [],
+        // v:2 이전 기록은 T를 직접 지정했는지 알 수 없다. 지난 기록을 멋대로
+        // 바꾸지 않도록 그때 저장된 T를 그대로 고정한다.
+        tOverride: (d.v === 2) ? d.tOverride : d.T,
+        exhausted: (d.v === 2) ? d.exhausted : !!d.reverseFirstDay
+      });
+      res.id = d.id;
+      res.v = d.v;
+      res.tOverride = d.tOverride;
+      res.exhausted = (d.v === 2) ? d.exhausted : !!d.reverseFirstDay;
+      res.cashApplied = d.cashApplied;
+      prev = res;
+      return res;
+    });
+    inst.realizedPL = prev.realizedPL || 0;
+    inst.mode = prev.mode || "general";
+  }
+
+  // 무매 체결이 계좌 현금에 준 영향의 합계. "그외 예수금"을 여기에 맞춰
+  // 움직이려면 바꾸기 전후를 비교해야 해서 따로 뽑아둔다. cashApplied 가 붙은
+  // 기록만 센다 — 이 기능이 생기기 전 기록들은 이미 사용자가 손으로 맞춰둔
+  // 예수금에 반영돼 있어서, 다시 세면 두 번 빠진다.
+  function muNetCash(inst){
+    var net = 0;
+    (inst.days || []).forEach(function(d){
+      if (!d.cashApplied) return;
+      (d.fills || []).forEach(function(f){
+        net += (f.type === "buy" ? -1 : 1) * f.qty * f.price;
+      });
+    });
+    return round4(net);
+  }
+  // 무매 기록을 고치면서 "그외 예수금"도 같이 따라가게 한다 (직접입력 종목의
+  // mutateManualTrades 와 같은 방식).
+  function mutateMuDays(inst, mutate){
+    var before = muNetCash(inst);
+    mutate();
+    replayMuDays(inst);
+    var after = muNetCash(inst);
+    if (after !== before){
+      state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + (after - before));
+    }
   }
 
   // Tomorrow's suggested order table, derived from the instance's current
@@ -4587,7 +4929,7 @@
   function muOrderPlan(inst, last){
     var a = inst.splitCount;
     if (last.mode === "reverse"){
-      var closes = inst.days.map(function(d){ return d.close; }).concat(last.close!=null?[]:[]);
+      var closes = inst.days.map(function(d){ return d.close; }).filter(function(c){ return c > 0; });
       var starPrice = muReverseStarPrice(closes.length ? closes : [last.close]);
       var sellFrac = muReverseSellFraction(a);
       if (last.reverseFirstDay){
@@ -4784,14 +5126,16 @@
         '<td class="num" data-label="다음매수↓">' + fmtMoney0(c.buyBandNext) + '</td>' +
         '<td class="num" data-label="다음매도↑">' + fmtMoney0(c.sellBandNext) + '</td>' +
         '<td class="num" data-label="Pool">' + fmtMoney0(c.Pool) + '</td>' +
-        '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost btn-danger cyc-del">삭제</button></td>' +
+        '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost cyc-edit">수정</button> ' +
+          '<button type="button" class="btn btn-sm btn-ghost btn-danger cyc-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>사이클 시작일</th><th>다음 시작 예정</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
       '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th class="col-action"></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<div class="footnote" style="margin-top:6px;">각 줄의 날짜는 <b>그 사이클이 시작된 날</b>이에요. 그 줄의 V·밴드는 이 사이클 동안 쓰는 기준값이고, 다음 줄은 "다음 시작 예정"일에 입력하면 돼요.</div>';
+      '<div class="footnote" style="margin-top:6px;">각 줄의 날짜는 <b>그 사이클이 시작된 날</b>이에요. 그 줄의 V·밴드는 이 사이클 동안 쓰는 기준값이고, 다음 줄은 "다음 시작 예정"일에 입력하면 돼요.</div>' +
+      '<div class="footnote" style="margin-top:4px;">[수정]은 날짜·종가·적립금만 고쳐요. 체결내역(수량·가격)을 바꾸려면 그 줄을 삭제하고 다시 입력해주세요. 어느 쪽이든 뒤 사이클의 V·Pool·밴드는 자동으로 다시 계산돼요.</div>';
   }
 
   /* ---------------- charts (hand-rolled SVG) ---------------- */
@@ -4807,20 +5151,24 @@
   // Hover doesn't exist on touch devices, so chart tooltips need an explicit
   // tap handler too — this wires both to the same show/hide callbacks,
   // normalizing touch events to look like a mouse event (clientX/clientY).
+  // These listeners are all PASSIVE on purpose. They used to call
+  // preventDefault() so a drag along the chart would scrub the tooltip, but the
+  // hover targets cover the whole plot area — so putting a finger on a chart
+  // froze the page: you couldn't scroll past it at all. Showing a tooltip is
+  // never worth taking scrolling away, so the page keeps the gesture and the
+  // tooltip just follows along.
   function bindPointerTip(el, onShow, onHide){
     el.addEventListener("mousemove", onShow);
     el.addEventListener("mouseleave", onHide);
-    el.addEventListener("touchstart", function(ev){
-      ev.preventDefault();
-      var t = ev.touches[0];
+    function fromTouch(ev){
+      var t = ev.touches && ev.touches[0];
+      if (!t) return;
       onShow({ clientX: t.clientX, clientY: t.clientY });
-    }, { passive: false });
-    el.addEventListener("touchmove", function(ev){
-      ev.preventDefault();
-      var t = ev.touches[0];
-      onShow({ clientX: t.clientX, clientY: t.clientY });
-    }, { passive: false });
-    el.addEventListener("touchend", onHide);
+    }
+    el.addEventListener("touchstart", fromTouch, { passive: true });
+    el.addEventListener("touchmove", fromTouch, { passive: true });
+    el.addEventListener("touchend", onHide, { passive: true });
+    el.addEventListener("touchcancel", onHide, { passive: true });
   }
 
   function renderBandChart(host, inst){
@@ -5457,9 +5805,7 @@
   });
 
   /* ---------------- export / import ---------------- */
-  document.getElementById("exportBtn").addEventListener("click", async function(){
-    var data = JSON.stringify(state, null, 2);
-    var filename = "vr-tracker-backup-" + todayStr() + ".json";
+  async function downloadFile(filename, data, mime){
     try {
       var downloads = (window.claude && window.claude.use) ? await window.claude.use("downloads") : null;
       if (downloads){
@@ -5468,11 +5814,96 @@
       }
     } catch(e){ /* fall through to manual */ }
     // fallback: open a blob link
-    var blob = new Blob([data], {type:"application/json"});
+    var blob = new Blob([data], {type: mime});
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url; a.download = filename; document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    downloadFile("vr-tracker-backup-" + todayStr() + ".json", JSON.stringify(state, null, 2), "application/json");
+  });
+
+  /* --- 거래내역 CSV ----------------------------------------------------------
+     백업 JSON은 이 앱만 읽을 수 있다. 연말에 손익을 따로 정리하거나 엑셀에서
+     들여다보려면 사람이 읽는 표가 필요해서, 기록된 매매를 한 장으로 펼친다.
+     실현손익은 화면에 나오는 것과 같은 방식(이동평균)으로 계산한다. */
+  function csvCell(v){
+    var s = (v == null) ? "" : String(v);
+    return /[",\n]/.test(s) ? ('"' + s.replace(/"/g, '""') + '"') : s;
+  }
+  function buildTradesCsv(){
+    var rows = [["날짜","출처","이름","티커","구분","수량","가격","금액","실현손익","메모"]];
+    function push(date, src, name, ticker, type, qty, price, gain, memo){
+      rows.push([
+        date, src, name, (ticker||"").toUpperCase(), type,
+        qty == null ? "" : qty,
+        price == null ? "" : price,
+        (qty != null && price != null) ? round2(qty*price) : "",
+        gain == null ? "" : round2(gain),
+        memo || ""
+      ]);
+    }
+    state.instances.forEach(function(inst){
+      var qty = inst.initQty || 0, cost = qty * (inst.initPrice || 0);
+      inst.cycles.forEach(function(c){
+        var fills = (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c);
+        fills.forEach(function(f){
+          if (f.type === "buy"){
+            cost += f.qty * f.price; qty += f.qty;
+            push(c.date, "VR", inst.name, inst.ticker, "매수", f.qty, f.price, null, "");
+          } else {
+            var avg = qty > 0 ? cost/qty : 0;
+            var sq = Math.min(f.qty, qty);
+            var gain = qty > 0 ? sq * (f.price - avg) : 0;
+            qty -= sq; cost = avg * Math.max(0, qty);
+            push(c.date, "VR", inst.name, inst.ticker, "매도", f.qty, f.price, gain, "");
+          }
+        });
+        if (c.deposit) push(c.date, "VR", inst.name, inst.ticker, c.deposit > 0 ? "적립" : "인출", null, null, null, fmtMoney0(c.deposit));
+      });
+    });
+    state.muInstances.forEach(function(inst){
+      var qty = 0, cost = 0;
+      (inst.days||[]).forEach(function(d){
+        (d.fills||[]).forEach(function(f){
+          if (f.type === "buy"){
+            cost += f.qty * f.price; qty += f.qty;
+            push(d.date, "무매", inst.name, inst.ticker, "매수", f.qty, f.price, null, "");
+          } else {
+            var avg = qty > 0 ? cost/qty : 0;
+            var sq = Math.min(f.qty, qty);
+            var gain = qty > 0 ? sq * (f.price - avg) : 0;
+            qty -= sq; cost = avg * Math.max(0, qty);
+            push(d.date, "무매", inst.name, inst.ticker, "매도", f.qty, f.price, gain, "");
+          }
+        });
+      });
+    });
+    state.portfolio.holdings.forEach(function(h){
+      (h.trades||[]).forEach(function(t){
+        push(t.date, "직접입력", h.ticker || "", h.ticker, t.type === "buy" ? "매수" : "매도",
+          t.qty, t.price, t.type === "sell" ? (t.gain||0) : null, "");
+      });
+    });
+    (state.portfolio.cashLog||[]).forEach(function(e){
+      if (e.kind !== "입금" && e.kind !== "출금") return;
+      push(e.date, "예수금", "", "", e.kind, null, null, null, fmtMoney0(e.amount));
+    });
+    (state.portfolio.manualRealized||[]).forEach(function(m){
+      var when = manualRealizedDate(m);
+      if (!when) return;
+      push(when, "과거입력", "", manualRealizedLabel(m), "실현손익", null, null, m.amount, m.memo || "");
+    });
+    // 헤더는 그대로 두고 본문만 날짜순으로 (YYYY-MM-DD라 문자열 비교로 충분)
+    var body = rows.slice(1).sort(function(a,b){ return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0); });
+    return [rows[0]].concat(body).map(function(r){ return r.map(csvCell).join(","); }).join("\r\n");
+  }
+  document.getElementById("csvBtn").addEventListener("click", function(){
+    var csv = buildTradesCsv();
+    if (csv.split("\r\n").length <= 1){ alert("아직 내보낼 거래 기록이 없어요."); return; }
+    // 엑셀이 UTF-8 한글을 알아보게 하려면 BOM이 필요하다.
+    downloadFile("vr-tracker-거래내역-" + todayStr() + ".csv", "\uFEFF" + csv, "text/csv;charset=utf-8");
   });
   document.getElementById("importBtn").addEventListener("click", function(){
     document.getElementById("importFile").click();
@@ -5569,6 +6000,16 @@
     else refreshFromCloud();
   });
   window.addEventListener("focus", refreshFromCloud);
+
+  // 홈 화면 앱으로 쓸 수 있게 하는 서비스 워커. file:// 로 열었을 땐 등록이
+  // 안 되는 게 정상이라, 실패해도 앱 동작에는 영향이 없어야 한다.
+  if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("sw.js").catch(function(e){
+        console.warn("service worker 등록 실패", e);
+      });
+    });
+  }
 
   wireAuthUI();
   wireApprovalUI();

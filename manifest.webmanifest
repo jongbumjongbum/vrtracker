@@ -1,0 +1,17 @@
+{
+  "name": "주식 기록",
+  "short_name": "주식기록",
+  "description": "밸류리밸런싱·무한매수법 사이클 관리",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#1B2430",
+  "theme_color": "#1B2430",
+  "lang": "ko",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
