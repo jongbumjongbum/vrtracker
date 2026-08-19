@@ -4425,6 +4425,10 @@
   // 마지막으로 고른 연월. 한 건 넣을 때마다 이번 달로 되돌아가면, 여러 해를
   // 이어서 넣을 때 되돌아간 걸 못 보고 엉뚱한 달에 쌓이게 된다.
   var mrLastPick = null;
+  // [연월만 표에 맞춰 고치기]에서 표와 짝을 못 지은 항목들. 화면에서 눈에
+  // 띄게 표시하고 맨 위로 올리는 데 쓴다 — 안 그러면 수십 줄 사이에 묻혀서
+  // 사라진 것처럼 보인다.
+  var mrUnmatched = {};
 
   /* --- 표 붙여넣기 ----------------------------------------------------------
      몇 해치 월별 실현손익을 한 칸씩 손으로 넣는 건 사람이 할 일이 아니다.
@@ -4494,6 +4498,9 @@
   function renderManualRealizedCard(){
     var list = state.portfolio.manualRealized || [];
     var sorted = list.slice().sort(function(a,b){
+      // 손봐야 할 줄을 맨 위로 올린다. 아래로 묻히면 못 찾는다.
+      var au = mrUnmatched[a.id] ? 1 : 0, bu = mrUnmatched[b.id] ? 1 : 0;
+      if (au !== bu) return bu - au;
       var am = manualRealizedMonth(a) || "", bm = manualRealizedMonth(b) || "";
       return am < bm ? 1 : (am > bm ? -1 : 0);
     });
@@ -4568,7 +4575,8 @@
         var mo = manualRealizedMonth(m) || "";
         var okShape = /^\d{4}-\d{2}$/.test(mo);
         var future = okShape && (mo > (nowY + "-" + pad(nowM)));
-        if (!okShape || future) wrongCount++;
+        var noMatch = !!mrUnmatched[m.id];
+        if (!okShape || future || noMatch) wrongCount++;
         var ry = okShape ? parseInt(mo.slice(0,4), 10) : null;
         var rm = okShape ? parseInt(mo.slice(5,7), 10) : null;
         var ys = "", ms = "";
@@ -4580,11 +4588,11 @@
           ms += '<option value="' + mm + '"' + (mm === rm ? " selected" : "") + '>' + mm + '월</option>';
         }
         var isVr = m.kind === "vr";
-        var flag = (!okShape || future)
-          ? ('<div class="footnote" style="color:var(--sell);margin-top:2px;">' +
-             (future ? "앞으로 올 달이에요 — 연월을 고쳐주세요" : "연월이 깨졌어요 — 연월을 골라주세요") + '</div>')
-          : "";
-        return '<tr data-mr="' + m.id + '"' + ((!okShape || future) ? ' style="outline:1px solid var(--sell);outline-offset:-1px;"' : '') + '>' +
+        var flagText = !okShape ? "연월이 깨졌어요 — 연월을 골라주세요"
+          : (future ? "앞으로 올 달이에요 — 연월을 고쳐주세요"
+          : (noMatch ? "표에서 같은 금액을 못 찾았어요 — 연월을 직접 골라주세요" : ""));
+        var flag = flagText ? ('<div class="footnote" style="color:var(--sell);margin-top:2px;">' + flagText + '</div>') : "";
+        return '<tr data-mr="' + m.id + '"' + (flagText ? ' style="outline:1px solid var(--sell);outline-offset:-1px;"' : '') + '>' +
           '<td data-label="연월"><span style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">' +
             '<select class="cell-input mr-y" style="width:auto;">' + ys + '</select>' +
             '<select class="cell-input mr-m" style="width:auto;">' + ms + '</select></span>' + flag + '</td>' +
@@ -4606,8 +4614,8 @@
         (wrongCount ? ", 확인 필요 " + wrongCount + "건" : "") + ")",
         (wrongCount
           ? ('<div class="limit-box" style="margin-bottom:10px;"><div class="limit-line">' +
-             '<b>연월을 확인해야 할 줄이 ' + wrongCount + '건 있어요.</b> 빨간 테두리가 쳐진 줄의 연도·월만 바꿔주세요 — ' +
-             '금액이나 메모를 다시 칠 필요는 없어요.</div></div>')
+             '<b>연월을 확인해야 할 줄이 ' + wrongCount + '건 있어요 — 맨 위에 모아뒀어요.</b> ' +
+             '빨간 테두리가 쳐진 줄의 연도·월만 바꿔주세요. 금액·종목·메모를 다시 칠 필요는 없어요.</div></div>')
           : '') +
         '<div class="table-wrap"><table class="stack-mobile">' +
         '<thead><tr><th>연월</th><th>구분</th><th>티커</th><th class="num">실현손익</th><th>메모</th><th class="col-action"></th></tr></thead>' +
@@ -4789,12 +4797,15 @@
           "\n되돌리려면 [기록 복구]를 쓰시면 돼요.")) return;
         stashBackup(currentUserId, state, "연월 맞추기 직전");
         plan.forEach(function(x){ x.entry.month = x.month; delete x.entry.date; });
+        // 짝을 못 지은 것들은 목록에서 바로 눈에 띄어야 한다.
+        mrUnmatched = {};
+        unmatched.forEach(function(e){ mrUnmatched[e.id] = true; });
         openRows["fold:manualRealized"] = true;
         saveState();
         renderMain();
         if (leftover.length || unmatched.length){
-          alert("연월 " + plan.length + "건을 고쳤어요." +
-            (unmatched.length ? ("\n\n표에서 같은 금액을 못 찾은 " + unmatched.length + "건은 그대로 뒀어요 — 목록에서 직접 고쳐주세요.") : "") +
+          alert("연월 " + moved + "건을 고쳤어요. (지운 항목은 없어요 — 여전히 " + list.length + "건 그대로예요)" +
+            (unmatched.length ? ("\n\n표에서 같은 금액을 못 찾은 " + unmatched.length + "건은 손대지 않았어요.\n아래 목록 <맨 위>에 빨간 테두리로 모아뒀으니, 연도·월만 골라주세요.") : "") +
             (leftover.length ? ("\n\n표에만 있고 목록에 없는 " + leftover.length + "건은 [기존 것에 더하기]로 따로 넣으실 수 있어요.") : ""));
         }
       }
