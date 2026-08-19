@@ -4353,7 +4353,7 @@
       var card = document.createElement("div");
       card.className = "card";
       card.innerHTML = "<h3>" + title + "</h3>" +
-        '<div class="card-desc">' + desc + '</div>' +
+        (desc ? ('<div class="card-desc">' + desc + '</div>') : '') +
         '<div id="' + hostId + '"></div>';
       mainArea.appendChild(card);
       renderRealizedBarChart(document.getElementById(hostId), points);
@@ -4362,13 +4362,13 @@
 
     realizedCard(
       "실현손익 연도별",
-      "매도할 때마다 확정된 손익을, 그 매도가 일어난 날짜 기준 연도로 묶었어요. 맨 아래에서 직접 적은 과거 실현손익도 같이 들어가 있어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "",
       "realizedYearChartHost",
       realizedPoints(buckets.byYear, function(k){ return k + "년"; })
     );
     realizedCard(
       "실현손익 월별",
-      "해가 바뀌어도 끊기지 않게, 월 단위로 쭉 이어서 묶었어요. 맨 아래에서 직접 적은 과거 실현손익도 같이 들어가 있어요. 막대를 누르면 VR·그외로 나눠서 보여줘요.",
+      "",
       "realizedMonthChartHost",
       realizedPoints(buckets.byMonth, function(k){ return k; })
     );
