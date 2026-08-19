@@ -372,7 +372,10 @@
 
   .sidebar-foot { display: flex; gap: 8px; }
 
-  .main { padding: 26px 30px 60px; max-width: 1180px; }
+  /* min-width:0 이 없으면 이 칸(그리드 아이템)이 안쪽 내용의 최소너비만큼
+     늘어난다. 손익 탭처럼 옆으로 긴 그래프가 들어가면 화면 전체가 그만큼
+     넓어져서, 휴대폰에서 페이지가 통째로 축소돼 보였다. */
+  .main { padding: 26px 30px 60px; max-width: 1180px; min-width: 0; }
   .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 60px 10px; max-width: 480px; }
   .empty-state h2 { font-size: 24px; }
   .empty-state p { color: var(--ink-soft); }
@@ -1857,7 +1860,10 @@
     // balance those trades produced.
     (state.portfolio.manualRealized||[]).forEach(function(m){
       var when = manualRealizedDate(m);
+      // 연월이 깨진 줄이 섞이면 "NaN년" 같은 칸이 표와 그래프에 생긴다.
+      // 집계에서는 빼고, 직접입력 표에는 표시를 달아 지울 수 있게 해둔다.
       if (!when || typeof m.amount !== "number") return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(when) || isNaN(new Date(when).getTime())) return;
       addBoth(when, m.kind === "vr" ? "vr" : "other", m.amount, manualRealizedLabel(m));
     });
     return { byYear: byYear, byMonth: byMonth, events: events };
@@ -1901,7 +1907,7 @@
   function snapshotsWithPriorRealized(){
     var prior = (state.portfolio.manualRealized || []).map(function(m){
       return { date: manualRealizedDate(m), amount: m.amount || 0 };
-    }).filter(function(x){ return x.date; });
+    }).filter(function(x){ return x.date && /^\d{4}-\d{2}-\d{2}$/.test(x.date); });
     return (state.portfolio.assetSnapshots || []).map(function(sn){
       var add = 0;
       prior.forEach(function(x){ if (x.date <= sn.date) add += x.amount; });
@@ -4415,6 +4421,10 @@
     renderManualRealizedCard();
   }
 
+  // 마지막으로 고른 연월. 한 건 넣을 때마다 이번 달로 되돌아가면, 여러 해를
+  // 이어서 넣을 때 되돌아간 걸 못 보고 엉뚱한 달에 쌓이게 된다.
+  var mrLastPick = null;
+
   // Lets the user type in realized P/L that happened before they started using
   // the app, so the year/month/period tables above aren't missing their history.
   function renderManualRealizedCard(){
@@ -4426,17 +4436,39 @@
     var totalVr = 0, totalOther = 0;
     list.forEach(function(m){ if (m.kind === "vr") totalVr += m.amount; else totalOther += m.amount; });
 
-    var thisMonth = todayStr().slice(0, 7);
+    var nowY = new Date().getFullYear(), nowM = new Date().getMonth() + 1;
+    // 여러 해를 이어서 넣는 자리라, 마지막에 고른 연월을 그대로 둔다. 예전엔
+    // 한 건 넣을 때마다 이번 달로 되돌아가서, 되돌아간 걸 못 보고 다음 걸 넣으면
+    // 2021년 것이 이번 달에 들어가 있었다.
+    var pick = mrLastPick || { year: nowY, month: nowM };
+    var minYear = nowY - 15;
+    list.forEach(function(m){
+      var mo = manualRealizedMonth(m);
+      var y = mo ? parseInt(String(mo).slice(0,4), 10) : NaN;
+      if (!isNaN(y) && y < minYear) minYear = y;
+    });
+    var yearOpts = "", mOpts = "";
+    for (var yy = nowY; yy >= minYear; yy--){
+      yearOpts += '<option value="' + yy + '"' + (yy === pick.year ? " selected" : "") + '>' + yy + '년</option>';
+    }
+    for (var mm = 1; mm <= 12; mm++){
+      mOpts += '<option value="' + mm + '"' + (mm === pick.month ? " selected" : "") + '>' + mm + '월</option>';
+    }
+
     var card = document.createElement("div");
     card.className = "card";
     card.innerHTML = "<h3>이 앱을 쓰기 전 실현손익 직접입력</h3>" +
       '<div class="card-desc">앱에 매매를 기록하기 전에 확정된 손익을 <b>월 단위로</b> 적어두면, 위의 기간별·연도별·월별 표에 같이 합산돼요. ' +
       '예수금과 총자산은 <b>바뀌지 않아요</b> — 지금 예수금에는 이미 그 매매 결과가 들어가 있으니까 여기서 또 더하면 두 번 세는 셈이 되거든요.</div>' +
-      '<div class="form-grid" style="grid-template-columns:repeat(5,1fr);margin-top:12px;">' +
-        field("연월", '<input id="mrMonth" type="month" autocomplete="off" value="' + thisMonth + '" />') +
+      '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);margin-top:12px;">' +
+        field("연도", '<select id="mrYear">' + yearOpts + '</select>') +
+        field("월", '<select id="mrMonthSel">' + mOpts + '</select>') +
         field("구분", '<select id="mrKind"><option value="other">그외 (티커 입력)</option><option value="vr">VR</option></select>') +
         field("티커", '<input id="mrTicker" type="text" autocomplete="off" style="text-transform:uppercase;" placeholder="예: TQQQ" />') +
-        field("실현손익 ($)", '<input id="mrAmount" type="text" autocomplete="off" inputmode="decimal" placeholder="1250.30 / -1250.30" />') +
+        // 휴대폰 숫자 자판에는 빼기(−)가 없어서 손실을 적을 방법이 없었다.
+        // 부호를 골라서 넣게 하면 자판과 상관없이 항상 된다.
+        field("이익 / 손실", '<select id="mrSign"><option value="gain">이익 (+)</option><option value="loss">손실 (−)</option></select>') +
+        field('금액 ($) <span class="hint">부호 없이 숫자만</span>', '<input id="mrAmount" type="text" autocomplete="off" inputmode="decimal" placeholder="예: 1250.30" />') +
         field("메모", '<input id="mrMemo" type="text" autocomplete="off" placeholder="예: 무한매수 1차" />') +
       '</div>' +
       '<div class="form-actions"><button type="button" class="btn btn-primary" id="mrAdd">추가</button></div>' +
@@ -4444,8 +4476,18 @@
 
     if (sorted.length){
       var rows = sorted.map(function(m){
+        // 잘못 들어간 줄을 찾아서 지울 수 있어야 한다 — 앞으로 올 달이거나
+        // 연월 모양이 아닌 줄에 표시를 달아준다.
+        var mo = manualRealizedMonth(m) || "";
+        var okShape = /^\d{4}-\d{2}$/.test(mo);
+        var future = okShape && (mo > (nowY + "-" + pad(nowM)));
+        var monthCell = escapeHtml(mo || "(없음)");
+        if (!okShape || future){
+          monthCell = '<span style="color:var(--sell)">' + monthCell +
+            ' <b>' + (future ? "앞으로 올 달" : "연월 오류") + '</b></span>';
+        }
         return '<tr>' +
-          '<td data-label="연월">' + (manualRealizedMonth(m) || "") + '</td>' +
+          '<td data-label="연월">' + monthCell + '</td>' +
           '<td data-label="종목">' + escapeHtml(manualRealizedLabel(m)) + '</td>' +
           '<td class="num" data-label="실현손익" style="color:' + pnlRowColor(m.amount) + '">' + fmtCurrency(m.amount) + '</td>' +
           '<td data-label="메모">' + escapeHtml(m.memo || "") + '</td>' +
@@ -4474,22 +4516,37 @@
 
     var addBtn = card.querySelector("#mrAdd");
     addBtn.addEventListener("click", function(){
-      var monthEl = document.getElementById("mrMonth");
+      var yearEl = document.getElementById("mrYear");
+      var monthEl = document.getElementById("mrMonthSel");
+      var signEl = document.getElementById("mrSign");
       var amtEl = document.getElementById("mrAmount");
       var msg = document.getElementById("mrMsg");
       var isVr = kindEl.value === "vr";
       var ticker = (tickerEl.value || "").trim().toUpperCase();
-      var amount = parseFloat(String(amtEl.value).replace(/[, $]/g, ""));
-      if (!monthEl.value){ msg.textContent = "연월을 골라주세요."; return; }
+      var raw = String(amtEl.value);
+      var num = parseFloat(raw.replace(/[, $]/g, ""));
+      var y = parseInt(yearEl.value, 10), mo = parseInt(monthEl.value, 10);
+      if (!(y > 0) || !(mo >= 1 && mo <= 12)){ msg.textContent = "연월을 골라주세요."; return; }
+      // 여기는 "이 앱 쓰기 전"에 확정된 손익을 적는 자리라 앞으로 올 달이 들어갈
+      // 일이 없다. 잘못 고른 것으로 보고 막는다.
+      if (y > nowY || (y === nowY && mo > nowM)){
+        msg.textContent = "아직 오지 않은 달(" + y + "년 " + mo + "월)이에요. 연도와 월을 다시 골라주세요.";
+        return;
+      }
       if (!isVr && !ticker){ msg.textContent = "티커를 적어주세요. (무한매수로 굴린 TQQQ면 TQQQ)"; return; }
-      if (isNaN(amount)){ msg.textContent = "실현손익 금액을 숫자로 적어주세요. 손실이면 앞에 - 를 붙이세요."; return; }
+      if (isNaN(num)){ msg.textContent = "금액을 숫자로 적어주세요. 손실이면 왼쪽에서 [손실 (−)]을 고르세요."; return; }
+      // 부호는 고른 값으로 정한다. 컴퓨터에서 앞에 - 를 직접 붙인 경우도 손실로 본다.
+      var isLoss = (signEl.value === "loss") || /^\s*-/.test(raw);
+      var amount = Math.abs(num) * (isLoss ? -1 : 1);
       state.portfolio.manualRealized.push({
-        id: uid(), month: monthEl.value,
+        id: uid(), month: y + "-" + pad(mo),
         kind: isVr ? "vr" : "other",
         ticker: isVr ? "VR" : ticker,
         amount: amount,
         memo: (document.getElementById("mrMemo").value || "").trim()
       });
+      // 여러 해를 이어서 넣을 수 있게 고른 연월을 기억해둔다.
+      mrLastPick = { year: y, month: mo };
       saveState();
       renderMain();
     });
@@ -5600,12 +5657,35 @@
       host.innerHTML = '<div class="chart-empty">아직 데이터가 없어요.</div>';
       return;
     }
-    var W = host.clientWidth || 900, H = 260, pad = {l:70,r:16,t:14,b:28};
+    // 점이 많아지면 휴대폰 폭에 다 우겨넣어봐야 못 읽는다. 막대그래프와 같은
+    // 방식으로 한 점에 최소 폭을 주고, 넘치면 카드 안에서 옆으로 밀어 본다.
+    // y축 숫자는 밀어도 자리를 지키도록 따로 얹는다.
+    var avail = host.clientWidth || 900, H = 260, pad = {l:70,r:16,t:14,b:28};
+    // 한 점에 최소 이만큼은 줘야 선이 읽힌다. 너무 크게 잡으면 넓은 화면에서도
+    // 굳이 옆으로 밀어야 해서, 휴대폰에서만 밀리도록 딱 맞는 값으로 둔다.
+    var minSlot = 28;
+    var W = Math.max(avail, pad.l + pad.r + points.length * minSlot);
+    var scrolls = W > avail + 1;
+
+    var outer = document.createElement("div");
+    if (scrolls){ outer.style.overflowX = "auto"; host.style.position = "relative"; }
     var wrap = document.createElement("div"); wrap.className = "chart-wrap";
+    if (scrolls) wrap.style.width = W + "px";
     var svg = svgEl("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", height:H, style:"display:block;overflow:visible;"});
     wrap.appendChild(svg);
     var tooltip = document.createElement("div"); tooltip.className = "chart-tooltip"; wrap.appendChild(tooltip);
-    host.appendChild(wrap);
+    outer.appendChild(wrap);
+    host.appendChild(outer);
+
+    var axisSvg = null;
+    if (scrolls){
+      var axisLayer = document.createElement("div");
+      axisLayer.style.cssText = "position:absolute;left:0;top:0;width:" + pad.l +
+        "px;height:" + H + "px;background:var(--panel);pointer-events:none;";
+      axisSvg = svgEl("svg", {viewBox:"0 0 "+pad.l+" "+H, width:pad.l, height:H, style:"display:block;overflow:visible;"});
+      axisLayer.appendChild(axisSvg);
+      host.appendChild(axisLayer);
+    }
 
     var vals = points.map(function(p){ return p.value; });
     var minV = Math.min.apply(null, vals.concat([0]));
@@ -5624,7 +5704,7 @@
       svg.appendChild(svgEl("line", {x1:pad.l, x2:W-pad.r, y1:gy, y2:gy, stroke:cssVar('--line'), "stroke-width":1}));
       var lbl = svgEl("text", {x:pad.l-8, y:gy+4, "text-anchor":"end", "font-size":10, fill:cssVar('--muted')});
       lbl.textContent = valueFmt(gv);
-      svg.appendChild(lbl);
+      (axisSvg || svg).appendChild(lbl);
     }
     if (minV < 0 && maxV > 0){
       var zy = y(0);
@@ -5634,11 +5714,20 @@
     var path = points.map(function(p,i){ return (i===0?"M":"L") + x(i) + "," + y(p.value); }).join(" ");
     svg.appendChild(svgEl("path", {d:path, fill:"none", stroke:cssVar(colorVar), "stroke-width":2.5, "stroke-linecap":"round", "stroke-linejoin":"round"}));
 
-    var maxLabels = 8;
+    // 마지막 칸은 늘 보여주고 싶지만, 바로 앞 라벨과 붙어버리면 두 개가 겹쳐
+    // 읽을 수 없게 된다. 충분히 떨어져 있을 때만 그린다. 양 끝은 기준점을
+    // 안쪽으로 돌려서 카드 밖으로 잘리지 않게 한다.
+    var maxLabels = Math.max(2, Math.floor((W - pad.l - pad.r) / 56));
     var step = Math.max(1, Math.ceil(points.length/maxLabels));
+    var lastLabelX = -Infinity;
     points.forEach(function(p,i){
-      if (i % step !== 0 && i !== points.length-1) return;
-      var lbl = svgEl("text", {x:x(i), y:H-8, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
+      var isLast = (i === points.length-1);
+      if (i % step !== 0 && !isLast) return;
+      var px = x(i);
+      if (px - lastLabelX < 52 && i !== 0) return;
+      lastLabelX = px;
+      var anchor = isLast ? "end" : (i === 0 ? "start" : "middle");
+      var lbl = svgEl("text", {x:px, y:H-8, "text-anchor":anchor, "font-size":10, fill:cssVar('--muted')});
       lbl.textContent = p.label;
       svg.appendChild(lbl);
     });
@@ -5656,6 +5745,8 @@
       tooltip.style.opacity = 1;
       tooltip.innerHTML = "<b>" + p.label + "</b><br/>" + valueFmt(p.value);
     }
+    // 요즘 값이 궁금한 거라, 밀리는 그래프는 오른쪽 끝에서 시작한다.
+    if (scrolls) outer.scrollLeft = W;
   }
 
   // Realized P/L per period. A table of these got long enough that the 손익 tab
@@ -5734,6 +5825,7 @@
 
     var maxLabels = Math.max(2, Math.floor((W - pad.l - pad.r) / 56));
     var step = Math.max(1, Math.ceil(points.length / maxLabels));
+    var barLastLabelX = -Infinity;
 
     points.forEach(function(p, i){
       var top = p.total >= 0 ? y(p.total) : zeroY;
@@ -5747,9 +5839,13 @@
       svg.appendChild(bar);
 
       if (i % step === 0 || i === points.length-1){
-        var xl = svgEl("text", {x:cx(i), y:H-10, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
-        xl.textContent = p.label;
-        svg.appendChild(xl);
+        var px = cx(i);
+        if (px - barLastLabelX >= 52 || i === 0){
+          barLastLabelX = px;
+          var xl = svgEl("text", {x:px, y:H-10, "text-anchor":"middle", "font-size":10, fill:cssVar('--muted')});
+          xl.textContent = p.label;
+          svg.appendChild(xl);
+        }
       }
     });
 
