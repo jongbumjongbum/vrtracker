@@ -4467,16 +4467,23 @@
         });
         return;
       }
-      // "2021-06  +70.19" 한 줄 형태
+      // "2021-06  TQQQ  +70.19" 한 줄 형태. 종목은 없어도 되고, 금액 앞뒤
+      // 어디에 있어도 된다 — 숫자가 아닌 토큰을 종목으로 본다. 종목을 줄마다
+      // 적을 수 있어야 VR·SOXL·TQQQ 를 한 번에 넣을 수 있다.
       var m = line.match(/((?:19|20)\d{2})\s*[-./년]?\s*(\d{1,2})\s*월?/);
       if (!m) return;
-      var nums = line.slice(m.index + m[0].length).split(/\s+/).filter(Boolean);
-      var val = null;
-      for (var i=0;i<nums.length;i++){ var c = toNum(nums[i]); if (c !== null){ val = c; break; } }
+      var toks = line.slice(m.index + m[0].length).split(/\s+/).filter(Boolean);
+      var val = null, tick = null;
+      toks.forEach(function(tok){
+        var c = toNum(tok);
+        if (c !== null){ if (val === null) val = c; return; }
+        var t = tok.replace(/[^A-Za-z0-9가-힣.\-]/g, "");
+        if (t && tick === null) tick = t.toUpperCase();
+      });
       if (val === null || val === 0){ skipped++; return; }
       var mm = parseInt(m[2], 10);
       if (!(mm >= 1 && mm <= 12)) return;
-      rows.push({ year: parseInt(m[1], 10), month: mm, amount: val });
+      rows.push({ year: parseInt(m[1], 10), month: mm, amount: val, ticker: tick });
     });
     return { rows: rows, skipped: skipped };
   }
@@ -4530,21 +4537,27 @@
       '<div class="form-actions"><button type="button" class="btn btn-primary" id="mrAdd">추가</button></div>' +
       '<div class="footnote" id="mrMsg" style="margin-top:6px;"></div>' +
       foldedHtml("mrPaste", "표 붙여넣어서 한 번에 채우기",
-        '<div class="card-desc">몇 해치를 한 칸씩 넣지 마시고, 월별 실현손익 표를 그대로 붙여넣으세요. ' +
-        '<b>연월과 금액만 있으면</b> 알아서 읽어요 — <code>2021-06 +70.19</code> 처럼 한 줄씩도 되고, ' +
-        '연도가 가로로 늘어선 표도 그대로 됩니다. 금액이 0이거나 비어 있는(—) 칸은 넣지 않아요.</div>' +
-        '<textarea id="mrPasteBox" rows="7" placeholder="예)\n2021-06  +70.19\n2021-07  +461.89\n2021-08  +1,100.76" ' +
+        '<div class="card-desc">몇 해치를 한 칸씩 넣지 마시고 표를 그대로 붙여넣으세요.<br>' +
+        '<b>연월 · 종목 · 금액</b> 순서로 적으면 종목까지 그대로 들어갑니다 — ' +
+        '<code>2021-06 TQQQ +70.19</code>, <code>2022-01 SOXL -705.92</code>, <code>2023-04 VR -37.19</code>.<br>' +
+        '종목을 안 적은 줄만 아래에서 고른 값으로 들어가요. 연도가 가로로 늘어선 표도 그대로 되고, ' +
+        '금액이 0이거나 비어 있는(—) 칸은 넣지 않아요.</div>' +
+        '<textarea id="mrPasteBox" rows="7" placeholder="예)\n2021-06  TQQQ  +70.19\n2021-07  SOXL  +461.89\n2022-01  VR    -705.92" ' +
           'style="width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:8px;padding:9px 10px;font-size:13px;font-family:ui-monospace,monospace;"></textarea>' +
         '<div class="form-grid" style="grid-template-columns:repeat(2,1fr);margin-top:10px;">' +
           field("구분", '<select id="mrPasteKind"><option value="other">그외 (티커 입력)</option><option value="vr">VR</option></select>') +
-          field('티커 <span class="hint">이 표 전체에 붙일 종목</span>', '<input id="mrPasteTicker" type="text" autocomplete="off" style="text-transform:uppercase;" value="TQQQ" />') +
+          field('티커 <span class="hint">종목을 안 적은 줄에만 쓰여요</span>', '<input id="mrPasteTicker" type="text" autocomplete="off" style="text-transform:uppercase;" value="TQQQ" />') +
         '</div>' +
         '<div class="footnote" id="mrPasteMsg" style="margin-top:8px;"></div>' +
         '<div class="form-actions" style="justify-content:flex-start;flex-wrap:wrap;">' +
           '<button type="button" class="btn" id="mrPasteCheck" style="white-space:nowrap;">읽어보기</button>' +
           '<button type="button" class="btn btn-primary" id="mrPasteReplace" style="white-space:nowrap;">이 표대로 전부 바꾸기</button>' +
           '<button type="button" class="btn" id="mrPasteAppend" style="white-space:nowrap;">기존 것에 더하기</button>' +
-        '</div>');
+          '<button type="button" class="btn" id="mrPasteFixMonths" style="white-space:nowrap;">연월만 표에 맞춰 고치기</button>' +
+        '</div>' +
+        '<div class="footnote" style="margin-top:6px;">' +
+        '<b>연월만 고치기</b>는 이미 적어두신 항목의 <b>종목·구분·메모는 그대로 두고</b>, 금액이 같은 줄을 표에서 찾아 ' +
+        '연월만 바꿔줍니다. 손으로 나눠 적어둔 걸 다시 칠 필요 없이 날짜만 바로잡을 때 쓰세요.</div>');
 
     if (sorted.length){
       // 적어둔 줄은 그 자리에서 바로 고칠 수 있어야 한다. 연월 하나 잘못 들어간
@@ -4683,9 +4696,17 @@
         }
         var byYear = {};
         parsed.rows.forEach(function(r){ byYear[r.year] = (byYear[r.year] || 0) + r.amount; });
+        var defTicker = (card.querySelector("#mrPasteTicker").value || "").trim().toUpperCase();
+        var defKind = card.querySelector("#mrPasteKind").value;
+        var byTicker = {};
+        parsed.rows.forEach(function(r){
+          var t = r.ticker ? r.ticker : (defKind === "vr" ? "VR" : (defTicker || "?"));
+          byTicker[t] = (byTicker[t] || 0) + r.amount;
+        });
         pMsg.innerHTML = '<b>' + parsed.rows.length + '건</b>을 읽었어요 · 합계 ' + fmtCurrency(total) +
           (parsed.skipped ? (' · 0이거나 빈 칸 ' + parsed.skipped + '개는 건너뛰었어요') : '') +
           '<br>' + Object.keys(byYear).sort().map(function(y){ return y + '년 ' + fmtCurrency(byYear[y]); }).join(' · ') +
+          '<br>종목별 · ' + Object.keys(byTicker).sort().map(function(t){ return t + ' ' + fmtCurrency(byTicker[t]); }).join(' · ') +
           (bad.length ? ('<br><span style="color:var(--sell)">아직 오지 않은 달이 ' + bad.length + '건 있어요 — 그건 빼고 넣어요.</span>') : '');
         return parsed.rows.filter(function(r){ return !(r.year > nowY || (r.year === nowY && r.month > nowM)); });
       }
@@ -4695,19 +4716,36 @@
         var kind = card.querySelector("#mrPasteKind").value;
         var ticker = (card.querySelector("#mrPasteTicker").value || "").trim().toUpperCase();
         if (kind !== "vr" && !ticker){ pMsg.textContent = "티커를 적어주세요."; return; }
-        var msg = replace
-          ? ("직접입력 실현손익을 이 표(" + rows.length + "건)로 <전부 바꿉니다>.\n\n기존 " +
-             (state.portfolio.manualRealized || []).length + "건은 지워져요. 되돌리려면 [기록 복구]를 쓰시면 돼요.")
-          : ("이 표(" + rows.length + "건)를 기존 목록에 더합니다.");
+        var msg;
+        if (replace){
+          // 손으로 나눠 적은 종목·구분이 통째로 날아가는 자리다. 무엇이
+          // 사라지는지 먼저 보여주고 나서 묻는다.
+          var cur = state.portfolio.manualRealized || [];
+          var curTickers = {};
+          cur.forEach(function(m){ curTickers[manualRealizedLabel(m)] = true; });
+          var names = Object.keys(curTickers).sort();
+          msg = "직접입력 실현손익을 이 표(" + rows.length + "건)로 <전부 바꿉니다>.\n\n" +
+            "지금 있는 " + cur.length + "건은 지워져요" +
+            (names.length ? (" — 나눠 적어두신 " + names.join(", ") + " 구분도 같이 사라져요.") : ".") +
+            "\n\n종목을 살리려면 [취소]를 누르고, 붙여넣는 줄마다 종목을 적어주세요 (예: 2021-06 TQQQ +70.19)." +
+            "\n되돌리려면 [기록 복구]를 쓰시면 돼요.";
+        } else {
+          msg = "이 표(" + rows.length + "건)를 기존 목록에 더합니다.";
+        }
         if (!confirm(msg + "\n\n합계 " + fmtCurrency(rows.reduce(function(a,r){ return a+r.amount; }, 0)))) return;
         // 되돌릴 수 있게 먼저 한 부 남긴다.
         stashBackup(currentUserId, state, replace ? "실현손익 표 붙여넣기 직전" : "실현손익 표 추가 직전");
         if (replace) state.portfolio.manualRealized = [];
         rows.forEach(function(r){
+          // 줄에 종목이 적혀 있으면 그게 우선이다. VR 이라고 적힌 줄은 VR 로,
+          // 나머지는 그 티커의 "그외"로 들어간다. 안 적힌 줄만 위에서 고른
+          // 기본값을 쓴다.
+          var isVrRow = r.ticker ? (r.ticker === "VR") : (kind === "vr");
+          var rowTicker = r.ticker ? r.ticker : ticker;
           state.portfolio.manualRealized.push({
             id: uid(), month: r.year + "-" + pad(r.month),
-            kind: kind === "vr" ? "vr" : "other",
-            ticker: kind === "vr" ? "VR" : ticker,
+            kind: isVrRow ? "vr" : "other",
+            ticker: isVrRow ? "VR" : rowTicker,
             amount: r.amount, memo: ""
           });
         });
@@ -4715,6 +4753,51 @@
         saveState();
         renderMain();
       }
+      // 이미 적어둔 항목의 연월만 표에 맞춰 고친다. 금액이 같은 줄끼리 짝을
+      // 지어 옮기므로 종목·구분·메모는 손대지 않는다 — 손으로 나눠 적어둔 걸
+      // 다시 치게 만들지 않는 게 요점이다.
+      function fixMonthsFromPaste(){
+        var rows = readPaste();
+        if (!rows || !rows.length) return;
+        var list = state.portfolio.manualRealized || [];
+        if (!list.length){ pMsg.textContent = "고칠 항목이 없어요. 먼저 목록이 있어야 해요."; return; }
+        var pool = rows.map(function(r){ return { r: r, used: false }; });
+        var plan = [], unmatched = [];
+        list.forEach(function(entry){
+          var hit = null;
+          for (var i=0;i<pool.length;i++){
+            if (!pool[i].used && Math.abs(pool[i].r.amount - entry.amount) < 0.005){ hit = pool[i]; break; }
+          }
+          if (!hit){ unmatched.push(entry); return; }
+          hit.used = true;
+          plan.push({ entry: entry, month: hit.r.year + "-" + pad(hit.r.month) });
+        });
+        var leftover = pool.filter(function(p){ return !p.used; }).map(function(p){ return p.r; });
+        if (!plan.length){
+          pMsg.innerHTML = '<span style="color:var(--sell)">표에서 금액이 같은 줄을 하나도 못 찾았어요.</span><br>' +
+            '적어두신 금액이 표의 월별 합계와 다르면 (종목별로 쪼개 적으신 경우) 이 방법으로는 못 맞춰요. ' +
+            '그때는 줄마다 종목을 적어서 [전부 바꾸기]를 쓰시는 게 빠릅니다.';
+          return;
+        }
+        var moved = plan.filter(function(x){ return x.entry.month !== x.month; }).length;
+        if (!confirm("적어두신 " + list.length + "건 중 " + plan.length + "건을 표에서 찾았어요.\n\n" +
+          "그 " + plan.length + "건의 연월을 표에 맞춰 고칩니다 (실제로 바뀌는 건 " + moved + "건).\n" +
+          "종목·구분·금액·메모는 그대로 둡니다.\n\n" +
+          (unmatched.length ? ("금액이 같은 줄을 못 찾은 " + unmatched.length + "건은 그대로 두고 표에 표시해둘게요.\n") : "") +
+          (leftover.length ? ("표에만 있고 목록에 없는 " + leftover.length + "건은 이번엔 넣지 않아요.\n") : "") +
+          "\n되돌리려면 [기록 복구]를 쓰시면 돼요.")) return;
+        stashBackup(currentUserId, state, "연월 맞추기 직전");
+        plan.forEach(function(x){ x.entry.month = x.month; delete x.entry.date; });
+        openRows["fold:manualRealized"] = true;
+        saveState();
+        renderMain();
+        if (leftover.length || unmatched.length){
+          alert("연월 " + plan.length + "건을 고쳤어요." +
+            (unmatched.length ? ("\n\n표에서 같은 금액을 못 찾은 " + unmatched.length + "건은 그대로 뒀어요 — 목록에서 직접 고쳐주세요.") : "") +
+            (leftover.length ? ("\n\n표에만 있고 목록에 없는 " + leftover.length + "건은 [기존 것에 더하기]로 따로 넣으실 수 있어요.") : ""));
+        }
+      }
+      card.querySelector("#mrPasteFixMonths").addEventListener("click", fixMonthsFromPaste);
       card.querySelector("#mrPasteCheck").addEventListener("click", function(){ readPaste(); });
       card.querySelector("#mrPasteReplace").addEventListener("click", function(){ applyPaste(true); });
       card.querySelector("#mrPasteAppend").addEventListener("click", function(){ applyPaste(false); });
