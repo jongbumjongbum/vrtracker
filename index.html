@@ -1413,10 +1413,21 @@
     // could silently rewrite history that already happened at a different G.
     var G = (input.forceG != null) ? input.forceG : currentG(inst, input.date);
     var fills = input.fills || [];
-    var buyQty = 0, buyCost = 0, sellQty = 0, sellProceeds = 0;
+    // 매도는 그 시점에 가진 만큼까지만 반영한다. 예전엔 적힌 그대로 빼서,
+    // 앞 사이클을 지우거나 날짜를 옮기면 뒤 사이클의 보유수량이 음수가 됐고
+    // 그러면 평가금·손익 같은 그 뒤 숫자가 전부 말이 안 되는 값이 됐다.
+    // (무매도 같은 방식으로 계산한다.) 기록 자체는 적은 그대로 남고, 줄여서
+    // 반영한 경우에는 sellClamped 로 알려 사용자가 확인할 수 있게 한다.
+    var buyQty = 0, buyCost = 0, sellQty = 0, sellProceeds = 0, sellClamped = false;
+    var running = Qprev;
     fills.forEach(function(f){
-      if (f.type === "buy"){ buyQty += f.qty; buyCost += f.qty*f.price; }
-      else { sellQty += f.qty; sellProceeds += f.qty*f.price; }
+      if (f.type === "buy"){
+        buyQty += f.qty; buyCost += f.qty*f.price; running += f.qty;
+      } else {
+        var sq = Math.min(f.qty, Math.max(0, running));
+        if (sq < f.qty - 1e-9) sellClamped = true;
+        sellQty += sq; sellProceeds += sq*f.price; running -= sq;
+      }
     });
     var deltaQty = buyQty - sellQty;
     var tradeCash = sellProceeds - buyCost;
@@ -1441,11 +1452,30 @@
       deposit: Number(input.deposit||0), G: G, Vprev: Vprev, Vnext: Vnext,
       Pool: Pool, PoolPrev: Poolprev, deltaQty: deltaQty, tradeCash: tradeCash,
       buyBandPrev: buyBandPrev, sellBandPrev: sellBandPrev, signal: signal,
-      buyBandNext: buyBandNext, sellBandNext: sellBandNext,
+      buyBandNext: buyBandNext, sellBandNext: sellBandNext, sellClamped: sellClamped,
       poolLimitPct: limit.buyPct, buyLimitAmt: buyLimitAmt,
       spy: (input.spy !== "" && input.spy != null) ? Number(input.spy) : null,
       qqq: (input.qqq !== "" && input.qqq != null) ? Number(input.qqq) : null
     };
+  }
+
+  // 체결을 적은 순서대로 적용해보고, 그 시점에 가진 것보다 많이 파는 줄이
+  // 있으면 알려준다. 이걸 그냥 받아주면 VR은 보유수량이 음수가 되고, 무매는
+  // 팔지도 못한 주식의 대금이 잔금에 들어와서 그 뒤 숫자가 전부 어긋난다.
+  function findOverSell(fills, startQty){
+    var qty = startQty || 0;
+    for (var i=0;i<fills.length;i++){
+      var f = fills[i];
+      if (f.type === "buy"){ qty += f.qty; continue; }
+      if (f.qty > qty + 1e-9) return { index: i, available: round4(qty), wanted: f.qty };
+      qty -= f.qty;
+    }
+    return null;
+  }
+  function overSellMessage(over){
+    return (over.index + 1) + "번째 체결에 매도 " + over.wanted + "주가 적혀 있는데, 그 시점에 가진 건 " +
+      over.available + "주예요.\n\n수량을 고치거나, 먼저 매수 줄을 넣어주세요.\n" +
+      "(없는 주식을 판 것으로 기록되면 이후 수량·잔금이 전부 어긋나요)";
   }
 
   function round2(n){ return Math.round(n*100)/100; }
@@ -1484,8 +1514,13 @@
   // a record in the middle invalidates everything after it. This re-runs the
   // chain from the seed state using each remaining cycle's own recorded
   // inputs (date, close, fills, deposit) so the history stays self-consistent.
+  // 되돌아온 값: 다시 계산한 뒤 보유수량이 음수가 되어버린 사이클의 날짜들.
+  // VR은 매도 수량을 줄여 맞추지 않고 적힌 그대로 두기 때문에 (기록을 임의로
+  // 고치지 않으려고), 앞 기록을 지웠을 때 뒤에서 "가진 것보다 많이 판" 상태가
+  // 될 수 있다. 그건 조용히 두면 안 되는 상태라 부르는 쪽에서 알려준다.
   function replayCycles(inst){
     var prev = instanceInitPseudoCycle(inst);
+    var clampedDates = [];
     inst.cycles = inst.cycles.map(function(c){
       var res = computeCycle(inst, prev, {
         date: c.date,
@@ -1497,9 +1532,17 @@
         forceG: c.G
       });
       res.id = c.id;
+      if (res.sellClamped) clampedDates.push(c.date);
       prev = res;
       return res;
     });
+    return clampedDates;
+  }
+  // 다시 계산한 결과가 말이 안 되면 (가진 것보다 많이 판 상태) 알려준다.
+  function warnIfNegativeQty(dates){
+    if (!dates || !dates.length) return;
+    alert("이 변경 때문에 " + dates.map(fmtDate).join(", ") + " 사이클의 매도 수량이 그때 보유수량보다 많아졌어요.\n\n" +
+      "가진 만큼만 판 것으로 계산했어요. 해당 사이클을 열어 체결 수량을 확인해주세요.");
   }
   function lastState(inst){
     if (inst.cycles.length === 0) return instanceInitPseudoCycle(inst);
@@ -2674,7 +2717,7 @@
         if (inst.realAvgCost != null) msg += "\n\n※ 실제평단은 자동으로 되돌아가지 않아요 — 삭제 후 직접 확인해주세요.";
         if (!confirm(msg)) return;
         inst.cycles.splice(idx, 1);
-        replayCycles(inst);
+        warnIfNegativeQty(replayCycles(inst));
         delete historyView[inst.id];
         delete sellLadderExpand[inst.id];
         saveState();
@@ -2705,7 +2748,7 @@
         c.price = np;
         c.deposit = currentSegment(inst, nd).type === "인출식" ? -Math.abs(ndep) : ndep;
         inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-        replayCycles(inst);
+        warnIfNegativeQty(replayCycles(inst));
         delete historyView[inst.id];
         delete sellLadderExpand[inst.id];
         saveState();
@@ -2814,6 +2857,8 @@
       if (pendingFills.length && fills.length !== pendingFills.length){
         if (!confirm("수량이나 가격이 비어있는 체결 항목이 있어요. 그건 빼고 기록할까요?")) return;
       }
+      var overVr = findOverSell(fills, last.qty || 0);
+      if (overVr){ alert(overSellMessage(overVr)); return; }
       // 마지막 기록보다 앞선 날짜를 넣으면 이 기록은 중간에 끼어들어간다. 그러면
       // 뒤 기록들의 V·Pool·밴드가 전부 다시 계산돼야 하는데, 예전엔 정렬만 하고
       // 넘어가서 그 뒤 숫자가 조용히 틀린 채로 남았다.
@@ -2829,7 +2874,7 @@
       applyFillsToRealAvgCost(inst, fills, last.qty);
       inst.cycles.push(res);
       inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-      replayCycles(inst);
+      warnIfNegativeQty(replayCycles(inst));
       currentSegment(inst, date).gDeferred = false;
       delete sellLadderExpand[inst.id];
       delete historyView[inst.id];
@@ -3254,6 +3299,8 @@
       if (pendingFills.length && input.fills.length !== pendingFills.length){
         if (!confirm("수량/가격이 비어있는 체결 항목은 빼고 기록할까요?")) return;
       }
+      var overMu = findOverSell(input.fills, last.qty || 0);
+      if (overMu){ alert(overSellMessage(overMu)); return; }
       var lastDate = inst.days.length ? inst.days[inst.days.length-1].date : null;
       if (lastDate && input.date < lastDate){
         if (!confirm("입력한 날짜(" + fmtDate(input.date) + ")가 마지막 기록(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
@@ -4901,21 +4948,28 @@
 
   function computeMuDay(inst, prev, input){
     // input: {date, close, fills:[{type,qty,price}], tOverride, exhausted}
-    var qty = prev.qty, cost = prev.qty * prev.avgCost, realizedGain = 0;
+    // 수량·평단·실현손익·현금을 한 번에 걸어서 계산한다. 예전에는 현금만 따로
+    // 세면서 매도 수량을 입력값 그대로 썼는데, 위 걸음은 가진 만큼만 파는지라
+    // (sq) 보유수량보다 많이 매도로 적으면 팔지도 못한 주식의 대금이 잔금에
+    // 들어왔다 — 그 뒤 모든 날의 잔금이 어긋난다.
+    var qty = prev.qty, cost = prev.qty * prev.avgCost;
+    var realizedGain = 0, buyCost = 0, sellProceeds = 0, clamped = false;
     (input.fills || []).forEach(function(f){
       if (f.type === "buy"){
-        cost += f.qty * f.price; qty += f.qty;
+        cost += f.qty * f.price; qty += f.qty; buyCost += f.qty * f.price;
       } else if (qty > 0){
         var avg = cost / qty;
         var sq = Math.min(f.qty, qty);
+        if (sq < f.qty - 1e-9) clamped = true;
         realizedGain += sq * (f.price - avg);
+        sellProceeds += sq * f.price;
         qty -= sq;
         cost = avg * Math.max(0, qty);
+      } else if (f.qty > 0){
+        clamped = true;   // 가진 게 없는데 매도로 적힌 줄
       }
     });
     var avgCost = qty > 0 ? cost/qty : 0;
-    var buyCost = (input.fills||[]).filter(function(f){ return f.type==="buy"; }).reduce(function(s,f){ return s+f.qty*f.price; }, 0);
-    var sellProceeds = (input.fills||[]).filter(function(f){ return f.type==="sell"; }).reduce(function(s,f){ return s+f.qty*f.price; }, 0);
     var cash = prev.cash - buyCost + sellProceeds;
 
     var a = inst.splitCount;
@@ -4938,6 +4992,10 @@
       T: T, mode: mode, half: half, reverseFirstDay: reverseFirstDay,
       qty: qty, avgCost: avgCost, cash: round2(cash), value: round2(qty*input.close),
       realizedPL: round2(prev.realizedPL + realizedGain),
+      // 그날 적힌 매도 수량이 그 시점 보유수량보다 많아서 일부만 반영됐다는 표시.
+      // 기록을 지우거나 날짜를 옮기면 뒤 기록이 이렇게 될 수 있어서, 조용히
+      // 넘어가지 않고 사용자에게 알려주는 데 쓴다.
+      sellClamped: clamped,
       // 다시 계산(replayMuDays)할 때 그날 사용자가 실제로 준 입력을 그대로
       // 되먹여야 같은 결과가 나온다. v:2 는 이 두 값을 저장하기 시작한 판본
       // 표시로, 그 전 기록은 T를 건드리지 않고 그대로 둔다.
@@ -4952,6 +5010,7 @@
   // 상태부터 각 기록의 원래 입력값으로 다시 굴려 앞뒤를 맞춘다.
   function replayMuDays(inst){
     var prev = muInstanceInit(inst);
+    var clampedDates = [];
     inst.days = inst.days.map(function(d){
       var res = computeMuDay(inst, prev, {
         date: d.date,
@@ -4967,11 +5026,13 @@
       res.tOverride = (d.v === 2) ? d.tOverride : null;
       res.exhausted = (d.v === 2) ? !!d.exhausted : !!d.reverseFirstDay;
       res.cashApplied = d.cashApplied;
+      if (res.sellClamped) clampedDates.push(d.date);
       prev = res;
       return res;
     });
     inst.realizedPL = prev.realizedPL || 0;
     inst.mode = prev.mode || "general";
+    return clampedDates;
   }
 
   // 예전 판본으로 남은 무매 기록에는 "그날 T를 직접 지정했는지"가 안 적혀 있다.
@@ -5020,10 +5081,18 @@
   function mutateMuDays(inst, mutate){
     var before = muNetCash(inst);
     mutate();
-    replayMuDays(inst);
+    var clamped = replayMuDays(inst);
     var after = muNetCash(inst);
     if (after !== before){
       state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + (after - before));
+    }
+    // 앞 기록을 지우거나 날짜를 옮기면 뒤 기록의 매도가 그날 보유수량보다
+    // 많아질 수 있다. 그때 앱은 가진 만큼만 판 것으로 계산하는데, 기록에는
+    // 원래 수량이 그대로 남아 있어서 말없이 넘어가면 나중에 왜 안 맞는지
+    // 알 길이 없다.
+    if (clamped && clamped.length){
+      alert("이 변경 때문에 " + clamped.map(fmtDate).join(", ") + " 기록의 매도 수량이 그날 보유수량보다 많아졌어요.\n\n" +
+        "가진 만큼만 판 것으로 계산했어요. 그 날 기록을 열어 수량을 확인해주세요.");
     }
   }
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>주식 기록 — 검사용</title>
+<p style="font:14px -apple-system,sans-serif">앱을 불러오는 중…</p>
+<script>
+/* 앱을 그대로 띄우되, 로그인·시세 서버 자리에만 가짜(stub.js)를 끼워 넣는다.
+   index.html 을 복사하지 않고 그때그때 읽어오므로 앱을 고쳐도 여기가 낡지 않는다.
+   서비스워커는 검사 중에 캐시가 끼어들면 헷갈리니 꺼둔다. */
+fetch('../index.html?v=' + Date.now())
+  .then(function(r){ return r.text(); })
+  .then(function(html){
+    html = html.replace(
+      '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"><\/script>',
+      '<script src="stub.js"><\/script>'
+    );
+    html = html.replace(
+      'if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){',
+      'if (false){'
+    );
+    document.open();
+    document.write(html);
+    document.close();
+  })
+  .catch(function(e){
+    document.body.textContent = '앱을 불러오지 못했어요: ' + e.message +
+      ' — 이 파일은 file:// 이 아니라 로컬 서버로 열어야 해요 (README 참고).';
+  });
+</script>
