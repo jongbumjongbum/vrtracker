@@ -4425,6 +4425,62 @@
   // 이어서 넣을 때 되돌아간 걸 못 보고 엉뚱한 달에 쌓이게 된다.
   var mrLastPick = null;
 
+  /* --- 표 붙여넣기 ----------------------------------------------------------
+     몇 해치 월별 실현손익을 한 칸씩 손으로 넣는 건 사람이 할 일이 아니다.
+     증권사나 다른 표에서 복사해온 걸 그대로 붙여넣으면 알아서 읽는다.
+     받아들이는 모양:
+       2021-06  +$70.19        (한 줄에 연월 + 금액)
+       2021.6   70.19
+       2021년 6월  70.19
+     그리고 가로로 연도가 늘어선 표도 그대로:
+       월  2021  2022  2023
+       1월 $0    -705.92  $0
+     금액이 0 이거나 —(자료 없음)인 칸은 넣지 않는다. 적어봐야 표만 길어진다. */
+  function parseRealizedPaste(text){
+    var lines = String(text || "").split(/\r?\n/).map(function(x){ return x.trim(); }).filter(Boolean);
+    var rows = [], years = null, skipped = 0;
+    function toNum(tok){
+      var t = String(tok).replace(/[$,\s]/g, "").replace(/[−–—]/g, "-");
+      if (!t || t === "-" || /^-+$/.test(t)) return null;   // "—" 는 자료 없음
+      if (!/^[+-]?\d+(\.\d+)?$/.test(t)) return null;
+      var v = parseFloat(t);
+      return isNaN(v) ? null : v;
+    }
+    lines.forEach(function(line){
+      // 연도가 가로로 늘어선 표의 머리줄
+      var ys = line.match(/(19|20)\d{2}/g);
+      var isMonthRow = /^\s*(\d{1,2})\s*월/.test(line);
+      if (!isMonthRow && ys && ys.length >= 2 && !/\d{4}\s*[-./년]\s*\d{1,2}/.test(line)){
+        years = ys.map(function(y){ return parseInt(y, 10); });
+        return;
+      }
+      // "1월  $0  -705.92  ..." 형태
+      if (isMonthRow && years){
+        var mo = parseInt(line.match(/^\s*(\d{1,2})\s*월/)[1], 10);
+        var rest = line.replace(/^\s*\d{1,2}\s*월/, "");
+        var toks = rest.split(/\s+/).filter(Boolean);
+        toks.forEach(function(tok, i){
+          if (i >= years.length) return;
+          var v = toNum(tok);
+          if (v === null || v === 0){ skipped++; return; }
+          rows.push({ year: years[i], month: mo, amount: v });
+        });
+        return;
+      }
+      // "2021-06  +70.19" 한 줄 형태
+      var m = line.match(/((?:19|20)\d{2})\s*[-./년]?\s*(\d{1,2})\s*월?/);
+      if (!m) return;
+      var nums = line.slice(m.index + m[0].length).split(/\s+/).filter(Boolean);
+      var val = null;
+      for (var i=0;i<nums.length;i++){ var c = toNum(nums[i]); if (c !== null){ val = c; break; } }
+      if (val === null || val === 0){ skipped++; return; }
+      var mm = parseInt(m[2], 10);
+      if (!(mm >= 1 && mm <= 12)) return;
+      rows.push({ year: parseInt(m[1], 10), month: mm, amount: val });
+    });
+    return { rows: rows, skipped: skipped };
+  }
+
   // Lets the user type in realized P/L that happened before they started using
   // the app, so the year/month/period tables above aren't missing their history.
   function renderManualRealizedCard(){
@@ -4472,7 +4528,23 @@
         field("메모", '<input id="mrMemo" type="text" autocomplete="off" placeholder="예: 무한매수 1차" />') +
       '</div>' +
       '<div class="form-actions"><button type="button" class="btn btn-primary" id="mrAdd">추가</button></div>' +
-      '<div class="footnote" id="mrMsg" style="margin-top:6px;"></div>';
+      '<div class="footnote" id="mrMsg" style="margin-top:6px;"></div>' +
+      foldedHtml("mrPaste", "표 붙여넣어서 한 번에 채우기",
+        '<div class="card-desc">몇 해치를 한 칸씩 넣지 마시고, 월별 실현손익 표를 그대로 붙여넣으세요. ' +
+        '<b>연월과 금액만 있으면</b> 알아서 읽어요 — <code>2021-06 +70.19</code> 처럼 한 줄씩도 되고, ' +
+        '연도가 가로로 늘어선 표도 그대로 됩니다. 금액이 0이거나 비어 있는(—) 칸은 넣지 않아요.</div>' +
+        '<textarea id="mrPasteBox" rows="7" placeholder="예)\n2021-06  +70.19\n2021-07  +461.89\n2021-08  +1,100.76" ' +
+          'style="width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:8px;padding:9px 10px;font-size:13px;font-family:ui-monospace,monospace;"></textarea>' +
+        '<div class="form-grid" style="grid-template-columns:repeat(2,1fr);margin-top:10px;">' +
+          field("구분", '<select id="mrPasteKind"><option value="other">그외 (티커 입력)</option><option value="vr">VR</option></select>') +
+          field('티커 <span class="hint">이 표 전체에 붙일 종목</span>', '<input id="mrPasteTicker" type="text" autocomplete="off" style="text-transform:uppercase;" value="TQQQ" />') +
+        '</div>' +
+        '<div class="footnote" id="mrPasteMsg" style="margin-top:8px;"></div>' +
+        '<div class="form-actions" style="justify-content:flex-start;flex-wrap:wrap;">' +
+          '<button type="button" class="btn" id="mrPasteCheck" style="white-space:nowrap;">읽어보기</button>' +
+          '<button type="button" class="btn btn-primary" id="mrPasteReplace" style="white-space:nowrap;">이 표대로 전부 바꾸기</button>' +
+          '<button type="button" class="btn" id="mrPasteAppend" style="white-space:nowrap;">기존 것에 더하기</button>' +
+        '</div>');
 
     if (sorted.length){
       // 적어둔 줄은 그 자리에서 바로 고칠 수 있어야 한다. 연월 하나 잘못 들어간
@@ -4594,6 +4666,59 @@
     }
     kindEl.addEventListener("change", syncTickerBox);
     syncTickerBox();
+
+    // --- 표 붙여넣기 ---
+    var pasteBox = card.querySelector("#mrPasteBox");
+    if (pasteBox){
+      var pMsg = card.querySelector("#mrPasteMsg");
+      function readPaste(){
+        var parsed = parseRealizedPaste(pasteBox.value);
+        var bad = parsed.rows.filter(function(r){
+          return r.year > nowY || (r.year === nowY && r.month > nowM);
+        });
+        var total = parsed.rows.reduce(function(a,r){ return a + r.amount; }, 0);
+        if (!parsed.rows.length){
+          pMsg.innerHTML = '<span style="color:var(--sell)">읽을 수 있는 줄이 없어요. 연월과 금액이 함께 있는지 확인해주세요.</span>';
+          return null;
+        }
+        var byYear = {};
+        parsed.rows.forEach(function(r){ byYear[r.year] = (byYear[r.year] || 0) + r.amount; });
+        pMsg.innerHTML = '<b>' + parsed.rows.length + '건</b>을 읽었어요 · 합계 ' + fmtCurrency(total) +
+          (parsed.skipped ? (' · 0이거나 빈 칸 ' + parsed.skipped + '개는 건너뛰었어요') : '') +
+          '<br>' + Object.keys(byYear).sort().map(function(y){ return y + '년 ' + fmtCurrency(byYear[y]); }).join(' · ') +
+          (bad.length ? ('<br><span style="color:var(--sell)">아직 오지 않은 달이 ' + bad.length + '건 있어요 — 그건 빼고 넣어요.</span>') : '');
+        return parsed.rows.filter(function(r){ return !(r.year > nowY || (r.year === nowY && r.month > nowM)); });
+      }
+      function applyPaste(replace){
+        var rows = readPaste();
+        if (!rows || !rows.length) return;
+        var kind = card.querySelector("#mrPasteKind").value;
+        var ticker = (card.querySelector("#mrPasteTicker").value || "").trim().toUpperCase();
+        if (kind !== "vr" && !ticker){ pMsg.textContent = "티커를 적어주세요."; return; }
+        var msg = replace
+          ? ("직접입력 실현손익을 이 표(" + rows.length + "건)로 <전부 바꿉니다>.\n\n기존 " +
+             (state.portfolio.manualRealized || []).length + "건은 지워져요. 되돌리려면 [기록 복구]를 쓰시면 돼요.")
+          : ("이 표(" + rows.length + "건)를 기존 목록에 더합니다.");
+        if (!confirm(msg + "\n\n합계 " + fmtCurrency(rows.reduce(function(a,r){ return a+r.amount; }, 0)))) return;
+        // 되돌릴 수 있게 먼저 한 부 남긴다.
+        stashBackup(currentUserId, state, replace ? "실현손익 표 붙여넣기 직전" : "실현손익 표 추가 직전");
+        if (replace) state.portfolio.manualRealized = [];
+        rows.forEach(function(r){
+          state.portfolio.manualRealized.push({
+            id: uid(), month: r.year + "-" + pad(r.month),
+            kind: kind === "vr" ? "vr" : "other",
+            ticker: kind === "vr" ? "VR" : ticker,
+            amount: r.amount, memo: ""
+          });
+        });
+        openRows["fold:manualRealized"] = true;
+        saveState();
+        renderMain();
+      }
+      card.querySelector("#mrPasteCheck").addEventListener("click", function(){ readPaste(); });
+      card.querySelector("#mrPasteReplace").addEventListener("click", function(){ applyPaste(true); });
+      card.querySelector("#mrPasteAppend").addEventListener("click", function(){ applyPaste(false); });
+    }
 
     var addBtn = card.querySelector("#mrAdd");
     addBtn.addEventListener("click", function(){
