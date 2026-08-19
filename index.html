@@ -1123,9 +1123,17 @@
             if (!b || !b.state) return;
             if (!confirm("이 백업(기록 " + b.count + "개)으로 되돌릴까요?\n지금 기록(" + recordCount(state) + "개)은 다시 백업으로 남아요.")) return;
             stashBackup(currentUserId, state, "되돌리기 직전 기록");
+            var prevState = state;
             state = b.state;
+            // 불러오기와 같은 이유로, 그려보고 나서 저장한다.
+            if (!renderSafely()){
+              state = prevState;
+              saveState();
+              render();
+              alert("이 백업을 여는 중 문제가 생겨서 원래 기록으로 되돌렸어요.");
+              return;
+            }
             saveState();
-            render();
             modal.classList.add("hidden");
           });
         });
@@ -1210,7 +1218,7 @@
       try { cached = localStorage.getItem(localKey(currentUserId)); } catch(e){}
       if (cached){ try { state = JSON.parse(cached); } catch(e){} }
       hideAuthGate();
-      render();
+      renderSafely();
       appReady = true;
       restoreDraft();
       updateRecoverBtn();
@@ -1245,7 +1253,7 @@
           } catch(e){}
         }
         saveState();
-        render();
+        renderSafely();
       }
     } else {
       currentUserId = null;
@@ -1538,30 +1546,73 @@
     if (qty > 0) inst.realAvgCost = round4(cost/qty);
   }
 
+  // 기록 하나가 모양이 어긋나 있으면 화면 전체가 안 그려진다 (예전 판본이 만든
+  // 기록, 손으로 고친 백업, 중간에 끊긴 저장). 그리기 전에 빠진 칸을 메워서
+  // 한 종목 때문에 앱을 못 여는 일이 없게 한다.
+  function normalizeInstance(inst){
+    if (!Array.isArray(inst.cycles)) inst.cycles = [];
+    if (!inst.id) inst.id = uid();
+    if (!inst.name) inst.name = "이름 없음";
+    if (!inst.ticker) inst.ticker = "?";
+    if (!(inst.cycleDays > 0)) inst.cycleDays = 14;
+    if (!inst.initDate) inst.initDate = todayStr();
+    ["initV","initPool","initQty","initPrice"].forEach(function(k){
+      if (typeof inst[k] !== "number" || isNaN(inst[k])) inst[k] = 0;
+    });
+    if (!inst.band || !(inst.band.low > 0) || !(inst.band.high > 0)) inst.band = { low: 0.85, high: 1.15 };
+    if (!Array.isArray(inst.typeSegments) || !inst.typeSegments.length){
+      inst.typeSegments = [{ type: "적립식", startDate: inst.initDate, startG: TYPE_DEFAULTS["적립식"].startG }];
+    }
+    inst.typeSegments.forEach(function(seg){
+      if (!TYPE_DEFAULTS[seg.type]) seg.type = "적립식";
+      if (!seg.startDate) seg.startDate = inst.initDate;
+      if (typeof seg.startG !== "number" || isNaN(seg.startG)) seg.startG = TYPE_DEFAULTS[seg.type].startG;
+    });
+  }
+  function normalizeMuInstance(m){
+    if (!Array.isArray(m.days)) m.days = [];
+    if (!m.id) m.id = uid();
+    if (!m.name) m.name = "이름 없음";
+    if (!m.ticker) m.ticker = "TQQQ";
+    if (!m.startDate) m.startDate = todayStr();
+    // 분할수는 ★% 계산에서 나누는 값이라 0이면 숫자가 전부 무한대가 된다.
+    if (!(m.splitCount > 0)) m.splitCount = 40;
+    if (typeof m.principal !== "number" || isNaN(m.principal)) m.principal = 0;
+    ["initQty","initAvgCost","initT"].forEach(function(k){
+      if (typeof m[k] !== "number" || isNaN(m[k])) m[k] = 0;
+    });
+    if (m.realizedPL == null) m.realizedPL = 0;
+    if (!m.mode) m.mode = "general";
+  }
+
   function normalizeState(){
-    if (!state.instances) state.instances = [];
+    if (!Array.isArray(state.instances)) state.instances = [];
+    state.instances.forEach(normalizeInstance);
     if (state.selectedId === undefined) state.selectedId = null;
-    if (!state.muInstances) state.muInstances = [];
+    if (!Array.isArray(state.muInstances)) state.muInstances = [];
     if (state.muSelectedId === undefined) state.muSelectedId = null;
+    var muMigrated = false;
     state.muInstances.forEach(function(m){
-      if (!m.days) m.days = [];
-      if (m.realizedPL == null) m.realizedPL = 0;
-      if (!m.mode) m.mode = "general";
+      normalizeMuInstance(m);
+      if (migrateMuDayInputs(m)) muMigrated = true;
     });
     if (!state.viewMode) state.viewMode = "vr";
     if (!state.portfolioCurrency) state.portfolioCurrency = "USD";
-    if (!state.portfolio) state.portfolio = { holdings: [] };
-    if (!state.portfolio.holdings) state.portfolio.holdings = [];
+    if (!state.portfolio || typeof state.portfolio !== "object") state.portfolio = { holdings: [] };
+    if (!Array.isArray(state.portfolio.holdings)) state.portfolio.holdings = [];
     if (state.portfolio.extraCash == null) state.portfolio.extraCash = 0;
-    if (!state.portfolio.cashLog) state.portfolio.cashLog = [];
-    if (!state.portfolio.assetSnapshots) state.portfolio.assetSnapshots = [];
-    if (!state.portfolio.manualRealized) state.portfolio.manualRealized = [];
+    if (!Array.isArray(state.portfolio.cashLog)) state.portfolio.cashLog = [];
+    if (!Array.isArray(state.portfolio.assetSnapshots)) state.portfolio.assetSnapshots = [];
+    if (!Array.isArray(state.portfolio.manualRealized)) state.portfolio.manualRealized = [];
     if (!state.pnlPreset) state.pnlPreset = "thisMonth";
     if (!state.pnlCustom) state.pnlCustom = { from: null, to: null };
     state.portfolio.holdings.forEach(function(h){
       if (h.realizedPL == null) h.realizedPL = 0;
       if (!h.trades) h.trades = [];
     });
+    // 한 번 표시해두면 다음 render 부터는 할 일이 없다. 표시만 하고 저장을
+    // 안 하면 매번 다시 하게 되고, 다른 기기와도 어긋난다.
+    if (muMigrated && currentUserId) saveState();
   }
 
   // 입금/출금만 저장한다. 매수·매도 줄은 거래 기록에서 파생해 그린다.
@@ -2191,6 +2242,29 @@
     renderMain();
   }
 
+  // 기록이 어딘가 어긋나 화면을 못 그리면 예전엔 빈 페이지만 남아서, 백업을
+  // 받아둘 수도 되돌릴 수도 없었다 — 이 앱이 기록의 유일한 사본인데도. 그릴 수
+  // 없을 땐 최소한 무슨 일인지와 빠져나갈 길은 보여준다.
+  function renderSafely(){
+    try {
+      render();
+      return true;
+    } catch(e){
+      console.error("render failed", e);
+      try {
+        mainArea.innerHTML =
+          '<div class="card" style="border-color:var(--sell);">' +
+            '<h3>기록을 여는 중 문제가 생겼어요</h3>' +
+            '<div class="card-desc">저장된 기록의 일부가 손상된 것 같아요. 아직 기록이 지워진 건 아니에요.<br><br>' +
+            '왼쪽 아래 <b>[백업 내보내기]</b>로 지금 상태를 파일로 먼저 받아두시고, ' +
+            '<b>[기록 복구]</b>에 예전 사본이 있으면 그걸로 되돌려보세요.</div>' +
+            '<div class="footnote" style="margin-top:10px;">기술적인 내용: ' + escapeHtml(String((e && e.message) || e)) + '</div>' +
+          '</div>';
+      } catch(e2){ /* 이것마저 실패하면 더 할 수 있는 게 없다 */ }
+      return false;
+    }
+  }
+
   function renderSidebar(){
     Array.prototype.forEach.call(document.querySelectorAll("#modeSwitch button"), function(b){
       b.classList.toggle("active", b.getAttribute("data-mode") === state.viewMode);
@@ -2724,8 +2798,10 @@
       var lastDate = inst.cycles.length ? inst.cycles[inst.cycles.length-1].date : null;
       var inserting = !!(lastDate && date < lastDate);
       if (inserting){
-        if (!confirm("입력한 날짜(" + fmtDate(date) + ")가 마지막 기록(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
-          "이 기록을 중간에 끼워 넣고, 뒤에 있는 사이클들의 V·Pool·밴드를 전부 다시 계산할까요?")) return;
+        var insMsg = "입력한 날짜(" + fmtDate(date) + ")가 마지막 기록(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
+          "이 기록을 중간에 끼워 넣고, 뒤에 있는 사이클들의 V·Pool·밴드를 전부 다시 계산할까요?";
+        if (inst.realAvgCost != null) insMsg += "\n\n※ 실제평단은 자동으로 맞춰지지 않아요 — 기록 후 직접 확인해주세요.";
+        if (!confirm(insMsg)) return;
       }
       var res = computeCycle(inst, last, {date:date, closePrice:close, fills:fills, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
       applyFillsToRealAvgCost(inst, fills, last.qty);
@@ -3906,7 +3982,7 @@
       '</div>' +
       '<div class="preset-row" style="margin:8px 0 10px;">' +
         CHART_RANGES.map(function(r){
-          return '<button type="button" class="btn btn-sm preset-btn' + (r.key===range?" active":"") + '" data-sym="' + sym + '" data-r="' + r.key + '">' + r.label + '</button>';
+          return '<button type="button" class="btn btn-sm preset-btn' + (r.key===range?" active":"") + '" data-sym="' + escapeHtml(sym) + '" data-r="' + r.key + '">' + r.label + '</button>';
         }).join("") +
         (opts.removable ? '<button type="button" class="btn btn-sm btn-ghost" id="chartClearBtn" style="margin-left:auto;">지우기</button>' : '') +
       '</div>' +
@@ -3964,8 +4040,14 @@
     if (sym && CHART_FIXED.indexOf(sym) === -1 && SERIES_CACHE[sym]) appendChartCard(sym, { removable: true });
 
     function go(sym2){
-      var v = (sym2 || document.getElementById("chartSymbol").value || "").trim().toUpperCase();
-      if (!v) return;
+      var raw = (sym2 || document.getElementById("chartSymbol").value || "").trim().toUpperCase();
+      // 티커에 쓰이는 글자만 남긴다. 따옴표 같은 게 섞이면 표가 깨진다.
+      var v = raw.replace(/[^A-Z0-9.\-]/g, "");
+      if (!v){
+        if (raw) chartState.note = { text: '"' + raw + '" 는 티커로 쓸 수 없는 글자예요. 영문·숫자로 입력해주세요.', isError: true };
+        renderMain();
+        return;
+      }
       chartState.symbol = v;
       if (SERIES_CACHE[v] || loadSeriesLocal(v)){
         if (!SERIES_CACHE[v]) SERIES_CACHE[v] = loadSeriesLocal(v);
@@ -4090,9 +4172,13 @@
       var foot = document.getElementById("pnlRangeFoot");
       var strip = document.getElementById("pnlRangeStats");
       if (foot){
-        foot.textContent = (r.from || r.to)
+        // 시작일이 종료일보다 뒤면 걸리는 기록이 하나도 없다. 그냥 0원으로만
+        // 보여주면 "왜 아무것도 안 나오지"로 읽혀서, 이유를 같이 적어준다.
+        var reversed = !!(r.from && r.to && r.from > r.to);
+        foot.innerHTML = ((r.from || r.to)
           ? ('기간: ' + (r.from ? fmtDate(r.from) : "처음") + ' ~ ' + (r.to ? fmtDate(r.to) : "지금") + ' · 매도 ' + sum.count + '건')
-          : ('전체 기간 · 매도 ' + sum.count + '건');
+          : ('전체 기간 · 매도 ' + sum.count + '건')) +
+          (reversed ? ' <b style="color:var(--sell)">— 시작일이 종료일보다 뒤예요. 두 날짜를 바꿔주세요.</b>' : '');
       }
       if (strip){
         strip.innerHTML =
@@ -4846,21 +4932,48 @@
         date: d.date,
         close: d.close,
         fills: d.fills || [],
-        // v:2 이전 기록은 T를 직접 지정했는지 알 수 없다. 지난 기록을 멋대로
-        // 바꾸지 않도록 그때 저장된 T를 그대로 고정한다.
-        tOverride: (d.v === 2) ? d.tOverride : d.T,
-        exhausted: (d.v === 2) ? d.exhausted : !!d.reverseFirstDay
+        // 그날 사용자가 T를 직접 지정했으면 그 값을, 아니면 체결에서 다시
+        // 계산한다. 어느 쪽인지는 migrateMuDayInputs 가 미리 표시해둔다.
+        tOverride: (d.v === 2) ? d.tOverride : ((typeof d.T === "number") ? d.T : null),
+        exhausted: (d.v === 2) ? !!d.exhausted : !!d.reverseFirstDay
       });
       res.id = d.id;
       res.v = d.v;
-      res.tOverride = d.tOverride;
-      res.exhausted = (d.v === 2) ? d.exhausted : !!d.reverseFirstDay;
+      res.tOverride = (d.v === 2) ? d.tOverride : null;
+      res.exhausted = (d.v === 2) ? !!d.exhausted : !!d.reverseFirstDay;
       res.cashApplied = d.cashApplied;
       prev = res;
       return res;
     });
     inst.realizedPL = prev.realizedPL || 0;
     inst.mode = prev.mode || "general";
+  }
+
+  // 예전 판본으로 남은 무매 기록에는 "그날 T를 직접 지정했는지"가 안 적혀 있다.
+  // 그대로 두면 다시 계산할 때 T를 손대도 되는지 알 수 없어서, 기록을 지우거나
+  // 고쳤을 때 수량·평단·잔금만 맞고 T는 옛 값으로 남는다 — 안내문에는 T도 다시
+  // 계산된다고 적혀 있는데도. 그래서 딱 한 번, 지금 있는 기록을 그대로 굴려보고
+  // 체결만으로는 안 나오는 T를 가진 날만 "직접 지정한 날"로 표시해둔다.
+  // 비교 기준은 그 날 자신이 기록해둔 직전 상태라, 이 시점에는 항상 정확하다.
+  function migrateMuDayInputs(inst){
+    var days = inst.days || [];
+    if (!days.length) return false;
+    var needs = false;
+    for (var i=0;i<days.length;i++){ if (days[i].v !== 2){ needs = true; break; } }
+    if (!needs) return false;
+    var prev = muInstanceInit(inst);
+    days.forEach(function(d){
+      if (d.v !== 2){
+        var natural = muDeriveT(inst, prev, d.fills || []).T;
+        var stored = (typeof d.T === "number") ? d.T : natural;
+        // 화면에 소수 둘째 자리까지만 보여주므로 그보다 작은 차이는 계산 오차다.
+        d.tOverride = (Math.abs(stored - natural) > 0.005) ? stored : null;
+        d.exhausted = !!d.reverseFirstDay;
+        d.v = 2;
+      }
+      prev = d;
+    });
+    return true;
   }
 
   // 무매 체결이 계좌 현금에 준 영향의 합계. "그외 예수금"을 여기에 맞춰
@@ -5908,21 +6021,42 @@
   document.getElementById("importBtn").addEventListener("click", function(){
     document.getElementById("importFile").click();
   });
+  // 이 앱이 내보낸 백업이 맞는지 최소한만 확인한다. 자세한 모양은 normalizeState
+  // 가 메워주니, 여기서는 "완전히 다른 파일"만 걸러내면 된다.
+  function looksLikeBackup(o){
+    if (!o || typeof o !== "object" || Array.isArray(o)) return false;
+    if (!Array.isArray(o.instances)) return false;
+    if (o.muInstances && !Array.isArray(o.muInstances)) return false;
+    if (o.portfolio && typeof o.portfolio !== "object") return false;
+    return o.instances.every(function(i){ return i && typeof i === "object"; });
+  }
   document.getElementById("importFile").addEventListener("change", function(ev){
     var file = ev.target.files[0];
     if (!file) return;
     var reader = new FileReader();
     reader.onload = function(){
-      try {
-        var parsed = JSON.parse(reader.result);
-        if (!parsed.instances) throw new Error("bad format");
-        if (!confirm("현재 데이터를 불러온 백업으로 덮어쓸까요?")) return;
-        state = parsed;
+      var parsed = null;
+      try { parsed = JSON.parse(reader.result); } catch(e){}
+      if (!looksLikeBackup(parsed)){
+        alert("이 파일은 이 앱의 백업이 아닌 것 같아요.\n[백업 내보내기]로 받은 .json 파일인지 확인해주세요.\n\n지금 기록은 그대로 뒀어요.");
+        return;
+      }
+      if (!confirm("현재 데이터를 불러온 백업으로 덮어쓸까요?\n\n지금 기록(" + recordCount(state) + "개)은 [기록 복구]에 남겨두니 되돌릴 수 있어요.")) return;
+      // 되돌릴 자리를 먼저 만들어 둔다.
+      stashBackup(currentUserId, state, "불러오기 직전 기록");
+      var prev = state;
+      state = parsed;
+      // 저장보다 그리기가 먼저다. 예전엔 반대여서, 열다가 실패한 파일이 이미
+      // 이 기기와 클라우드에 저장된 뒤였다 — 화면은 빈 채로 남고 원래 기록은
+      // 사라졌는데, 사용자에게는 "파일을 읽을 수 없어요"만 보였다.
+      if (!renderSafely()){
+        state = prev;
         saveState();
         render();
-      } catch(e){
-        alert("파일을 읽을 수 없어요. 올바른 백업 파일인지 확인해주세요.");
+        alert("불러온 파일을 여는 중 문제가 생겨서 원래 기록으로 되돌렸어요.\n다른 백업 파일로 다시 시도해주세요.");
+        return;
       }
+      saveState();
     };
     reader.readAsText(file);
     ev.target.value = "";
