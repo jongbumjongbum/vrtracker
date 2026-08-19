@@ -583,6 +583,7 @@
     <div class="instance-list" id="instanceList"></div>
 
     <div class="save-status" id="saveStatus"></div>
+    <div class="footnote" id="buildStamp" style="margin-top:-4px;"></div>
     <button class="btn btn-ghost btn-sm hidden" id="recoverBtn" type="button">기록 복구</button>
     <div class="sidebar-foot">
       <button class="btn btn-ghost btn-sm" id="exportBtn" type="button" style="flex:1">백업 내보내기</button>
@@ -6626,6 +6627,33 @@
       });
     });
   }
+
+  // 화면이 낡았는지 눈으로 확인할 수 있어야 한다. 고쳐서 올렸는데도 안 보이면
+  // 십중팔구 캐시에 걸린 옛 사본이고, 그때 이 시각이 안 바뀌어 있다.
+  (function showBuildStamp(){
+    var el = document.getElementById("buildStamp");
+    if (!el) return;
+    var d = new Date(document.lastModified);
+    var when = isNaN(d.getTime()) ? "-" :
+      ((d.getMonth()+1) + "/" + d.getDate() + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()));
+    el.innerHTML = '화면 판본 ' + when +
+      ' · <a href="#" id="forceReload" style="color:var(--accent-ink);">새로 받기</a>';
+    document.getElementById("forceReload").addEventListener("click", async function(ev){
+      ev.preventDefault();
+      // 서비스워커와 캐시를 모두 비우고 완전히 새로 받는다.
+      try {
+        if (navigator.serviceWorker){
+          var regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(function(r){ return r.unregister(); }));
+        }
+        if (window.caches){
+          var keys = await caches.keys();
+          await Promise.all(keys.map(function(k){ return caches.delete(k); }));
+        }
+      } catch(e){ console.warn("cache clear failed", e); }
+      location.replace(location.pathname + "?v=" + Date.now());
+    });
+  })();
 
   wireAuthUI();
   wireApprovalUI();

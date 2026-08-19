@@ -3,7 +3,7 @@
    저장된 기록은 볼 수 있게 한다. 새 판을 올렸을 때 옛 화면이 계속 뜨면 안 되니
    페이지 자체는 항상 인터넷을 먼저 보고, 실패했을 때만 캐시를 쓴다. */
 
-var VERSION = "v1";
+var VERSION = "v2";
 var CACHE = "vrtracker-" + VERSION;
 
 // 앱 껍데기. 로그인 라이브러리는 다른 도메인이지만 CORS가 열려 있어 같이 담긴다.
@@ -56,8 +56,11 @@ self.addEventListener("fetch", function(ev){
 
   // 페이지는 인터넷 우선 — 새 판을 올리면 바로 받아보게.
   if (req.mode === "navigate"){
+    // cache:"reload" 를 줘야 브라우저 자체 캐시까지 건너뛴다. 이게 없으면
+    // GitHub Pages 가 붙인 10분짜리 캐시 때문에, 새로 올려도 한동안 옛 화면이
+    // 그대로 나온다 — 고친 게 안 보인다는 소리를 듣게 된다.
     ev.respondWith(
-      fetch(req).then(function(res){
+      fetch(new Request(req.url, { cache: "reload", credentials: "same-origin" })).then(function(res){
         var copy = res.clone();
         caches.open(CACHE).then(function(c){ c.put("./index.html", copy); });
         return res;
