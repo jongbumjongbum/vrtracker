@@ -508,6 +508,7 @@
   .user-badge .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .user-badge button { font-size: 11px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
   #adminApprovalBtn { width: 100%; margin-top: 4px; }
+  .save-status { font-size: 11.5px; color: var(--muted); min-height: 15px; padding: 0 2px; }
   .approval-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .approval-row:last-child { border-bottom: none; }
   .approval-row .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -566,6 +567,8 @@
 
     <div class="instance-list" id="instanceList"></div>
 
+    <div class="save-status" id="saveStatus"></div>
+    <button class="btn btn-ghost btn-sm hidden" id="recoverBtn" type="button">기록 복구</button>
     <div class="sidebar-foot">
       <button class="btn btn-ghost btn-sm" id="exportBtn" type="button" style="flex:1">백업 내보내기</button>
       <button class="btn btn-ghost btn-sm" id="importBtn" type="button" style="flex:1">불러오기</button>
@@ -785,6 +788,17 @@
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="recoverModal">
+  <div class="modal">
+    <h3>기록 복구</h3>
+    <div class="card-desc">다른 기기의 기록에 덮이기 직전의 사본이에요. 되돌리면 지금 기록은 다시 백업으로 남으니 되돌리기를 취소할 수도 있어요.</div>
+    <div id="recoverList"></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="recoverCloseBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="approvalModal">
   <div class="modal">
     <h3>회원 관리</h3>
@@ -819,6 +833,48 @@
 
   function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
   function localKey(userId){ return STORE_KEY + "_" + userId; }
+  function backupKey(userId){ return STORE_KEY + "_" + userId + "_backup"; }
+
+  // 서버에 있다고 우리가 믿는 판본의 시각. 저장 직전에 서버가 이보다 앞서 있으면
+  // 그 사이 다른 기기가 저장했다는 뜻이라, 통째로 덮기 전에 그 사본을 남긴다.
+  var lastServerAt = 0;
+  function stateAt(st){ return (st && st.updatedAt) ? Date.parse(st.updatedAt) : 0; }
+  // 사라지면 곤란한 것들의 개수. 어느 쪽 사본이 더 많은 기록을 담고 있는지
+  // 가늠하는 용도라 정확한 의미보다 놓치는 항목이 없는 게 중요하다.
+  function recordCount(st){
+    if (!st) return 0;
+    var n = 0;
+    (st.instances||[]).forEach(function(i){ n += (i.cycles||[]).length; });
+    (st.muInstances||[]).forEach(function(i){ n += (i.days||[]).length; });
+    var pf = st.portfolio || {};
+    (pf.holdings||[]).forEach(function(h){ n += (h.trades||[]).length; });
+    n += (pf.manualRealized||[]).length + (pf.cashLog||[]).length + (pf.assetSnapshots||[]).length;
+    return n;
+  }
+  function readBackups(userId){
+    try {
+      var raw = localStorage.getItem(backupKey(userId));
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch(e){ return []; }
+  }
+  // 덮어쓰기 전에 무조건 한 부 남긴다. 최근 5개만 들고 있는다.
+  function stashBackup(userId, st, reason){
+    if (!userId || !st) return;
+    try {
+      var arr = readBackups(userId);
+      var last = arr[0];
+      if (last && last.updatedAt === (st.updatedAt || null) && last.count === recordCount(st)) return;
+      arr.unshift({ at: new Date().toISOString(), reason: reason, updatedAt: st.updatedAt || null, count: recordCount(st), state: st });
+      localStorage.setItem(backupKey(userId), JSON.stringify(arr.slice(0, 5)));
+    } catch(e){ /* 용량이 모자라면 백업은 포기해도 본 저장은 계속돼야 한다 */ }
+    updateRecoverBtn();
+  }
+  function updateRecoverBtn(){
+    var btn = document.getElementById("recoverBtn");
+    if (!btn) return;
+    btn.classList.toggle("hidden", !currentUserId || readBackups(currentUserId).length === 0);
+  }
 
   // Every save stamps a client timestamp. Without it the loader can't tell
   // whether the cloud copy or the local copy is the newer one, and it used to
@@ -853,11 +909,23 @@
     if (!sb) return;
     setSaveStatus("저장 중…");
     try {
+      // 오래 열어둔 탭은 아침에 읽은 사본을 그대로 들고 있다. 그 상태로 올리면
+      // 그 사이 다른 기기에서 넣은 기록이 통째로 사라진다 (포트폴리오 탭을 열기만
+      // 해도 스냅샷 때문에 저장이 일어나서, 아무것도 안 해도 벌어질 수 있다).
+      // 그래서 올리기 전에 서버가 우리가 아는 것보다 앞서 있는지 보고, 앞서 있으면
+      // 그 사본을 이 기기에 남긴 뒤에 올린다 — 조용히 없어지는 일만은 막는다.
+      var srvRow = await sb.from("vr_data").select("data").eq("user_id", userId).maybeSingle();
+      var srv = (srvRow && srvRow.data) ? srvRow.data.data : null;
+      if (srv && stateAt(srv) > lastServerAt && stateAt(srv) !== stateAt(stateObj)){
+        stashBackup(userId, srv, "다른 기기가 저장한 사본");
+        setSaveStatus("다른 기기 기록을 백업해뒀어요 — [기록 복구]에서 볼 수 있어요", true);
+      }
       var res = await sb.from("vr_data").upsert({ user_id: userId, data: stateObj, updated_at: new Date().toISOString() });
       if (res.error){
         console.error("cloud save error", res.error);
         setSaveStatus("저장 실패 — 이 기기에만 있어요", true);
       } else {
+        lastServerAt = stateAt(stateObj);
         setSaveStatus("저장됨");
       }
     } catch(e){
@@ -1022,6 +1090,38 @@
     document.getElementById("adminApprovalBtn").classList.remove("hidden");
     refreshPendingCount();
   }
+  function wireRecoverUI(){
+    var modal = document.getElementById("recoverModal");
+    document.getElementById("recoverCloseBtn").addEventListener("click", function(){ modal.classList.add("hidden"); });
+    document.getElementById("recoverBtn").addEventListener("click", function(){
+      var list = document.getElementById("recoverList");
+      var backups = readBackups(currentUserId);
+      if (!backups.length){ list.innerHTML = '<div class="footnote">백업이 없어요.</div>'; }
+      else {
+        list.innerHTML = backups.map(function(b, i){
+          return '<div class="approval-row"><span class="email">' +
+            new Date(b.at).toLocaleString("ko-KR") + ' · 기록 ' + b.count + '개' +
+            '<br><span class="footnote">' + escapeHtml(b.reason || "") + '</span></span>' +
+            '<button type="button" class="btn btn-sm" data-restore="' + i + '">되돌리기</button></div>';
+        }).join("");
+        Array.prototype.forEach.call(list.querySelectorAll("[data-restore]"), function(btn){
+          btn.addEventListener("click", function(){
+            var b = readBackups(currentUserId)[parseInt(btn.getAttribute("data-restore"), 10)];
+            if (!b || !b.state) return;
+            if (!confirm("이 백업(기록 " + b.count + "개)으로 되돌릴까요?\n지금 기록(" + recordCount(state) + "개)은 다시 백업으로 남아요.")) return;
+            stashBackup(currentUserId, state, "되돌리기 직전 기록");
+            state = b.state;
+            saveState();
+            render();
+            modal.classList.add("hidden");
+          });
+        });
+      }
+      modal.classList.remove("hidden");
+    });
+    updateRecoverBtn();
+  }
+
   function wireApprovalUI(){
     document.getElementById("adminApprovalBtn").addEventListener("click", openApprovalModal);
     document.getElementById("approvalCloseBtn").addEventListener("click", function(){
@@ -1030,6 +1130,40 @@
     document.getElementById("pendingLogoutBtn").addEventListener("click", async function(){
       if (sb) await sb.auth.signOut();
     });
+  }
+
+  // 서버 사본을 받아들인다. 이 기기 사본에 기록이 더 많으면 (다른 탭이 덮어쓴
+  // 뒤일 수 있다) 버리기 전에 한 부 남긴다.
+  function adoptCloudState(cloud, rerender){
+    if (!cloud) return;
+    if (recordCount(cloud) < recordCount(state)){
+      stashBackup(currentUserId, state, "서버 사본으로 바뀌기 직전 이 기기 기록");
+    }
+    state = cloud;
+    lastServerAt = stateAt(cloud);
+    try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+    if (rerender){
+      var snap = snapshotFormValues();
+      render();
+      restoreFormValues(snap);
+    }
+  }
+
+  // 탭을 다시 볼 때마다 서버가 더 최신인지 본다. 예전엔 돌아올 때마다 앱을 통째로
+  // 다시 띄우면서 이 확인이 저절로 됐는데, 입력값이 날아가는 걸 막느라 그 재부팅을
+  // 없애면서 확인까지 같이 사라졌다. 그 사이 이 탭은 아침 사본을 든 채로 저장을
+  // 해버려서, 다른 기기에서 넣은 기록을 덮었다.
+  var cloudSyncing = false;
+  async function refreshFromCloud(){
+    if (!currentUserId || !appReady || cloudSyncing) return;
+    cloudSyncing = true;
+    try {
+      var cloud = await cloudLoad(currentUserId);
+      if (!cloud) return;
+      if (stateAt(cloud) <= stateAt(state)) { lastServerAt = stateAt(cloud); return; }
+      adoptCloudState(cloud, true);
+      setSaveStatus("다른 기기에서 저장한 기록을 불러왔어요");
+    } finally { cloudSyncing = false; }
   }
 
   // getSession() and onAuthStateChange both fire on startup, and the boot has
@@ -1066,6 +1200,7 @@
       render();
       appReady = true;
       restoreDraft();
+      updateRecoverBtn();
 
       var cloud = await cloudLoad(currentUserId);
       if (cloud){
@@ -1073,16 +1208,13 @@
         // away edits that were saved locally but never reached the server.
         var localAt = state && state.updatedAt ? Date.parse(state.updatedAt) : 0;
         var cloudAt = cloud.updatedAt ? Date.parse(cloud.updatedAt) : 0;
+        lastServerAt = cloudAt;
         if (cached && localAt && localAt > cloudAt){
           // Local is ahead — push it up instead of overwriting it.
           cloudSave(currentUserId, state);
           setSaveStatus("이 기기 기록이 더 최신이라 서버에 올렸어요");
         } else {
-          state = cloud;
-          try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
-          var cloudSnap = snapshotFormValues();
-          render();
-          restoreFormValues(cloudSnap);
+          adoptCloudState(cloud, true);
         }
       } else {
         // brand new account on this browser: offer to migrate any pre-login local data
@@ -5434,10 +5566,13 @@
   window.addEventListener("pagehide", saveDraft);
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "hidden") saveDraft();
+    else refreshFromCloud();
   });
+  window.addEventListener("focus", refreshFromCloud);
 
   wireAuthUI();
   wireApprovalUI();
+  wireRecoverUI();
   if (sb){
     sb.auth.onAuthStateChange(function(_event, session){ onAuthChange(session); });
     sb.auth.getSession().then(function(res){ onAuthChange(res.data.session); });
