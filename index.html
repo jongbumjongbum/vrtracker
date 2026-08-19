@@ -155,8 +155,11 @@
   .guide-ticker { font-size: 16px; font-weight: 700; }
   .guide-meta { display: flex; gap: 12px; font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; flex-wrap: wrap; }
   .guide-body { border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
-  .guide-body.buy { background: var(--sell-soft); }
-  .guide-body.sell { background: var(--buy-soft); }
+  /* 앱 어디서나 매수는 초록(--buy), 매도는 빨강(--sell)이다 (signal-buy /
+     signal-sell). 이 카드만 두 색이 뒤바뀌어 있어서, 같은 화면을 오가며 보면
+     주문을 반대로 읽기 딱 좋았다. */
+  .guide-body.buy { background: var(--buy-soft); }
+  .guide-body.sell { background: var(--sell-soft); }
 
   .order-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 8px 0 4px; }
   .order-head-price { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -457,7 +460,6 @@
     transform: translate(-50%, -110%); white-space: nowrap; box-shadow: var(--shadow); opacity: 0;
     transition: opacity .1s; z-index: 5;
   }
-  :root[data-theme="dark"] .chart-tooltip, @media (prefers-color-scheme:dark) { }
   .chart-tooltip b { font-family: ui-monospace, monospace; }
   .chart-empty { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
 
@@ -918,7 +920,27 @@
       return res.data ? res.data.data : null;
     } catch(e){ console.error("cloud load failed", e); return null; }
   }
-  async function cloudSave(userId, stateObj){
+  // 저장 요청이 겹치면 늦게 출발한 것이 먼저 도착하고, 먼저 출발한 것이 나중에
+  // 도착해 서버를 옛 내용으로 되돌릴 수 있다. 저장은 흔히 연달아 일어난다 —
+  // 예를 들어 "저장하고 다시 그리기"에서 그리는 쪽이 또 저장을 부르는 자리가
+  // 있다. 한 번에 하나만 올리고, 그 사이 쌓인 요청은 마지막 하나로 합친다.
+  // 늘 state 전체를 통째로 올리니 마지막 것만 올리면 충분하다.
+  var cloudSaveInFlight = false;
+  var cloudSavePending = null;
+  function cloudSave(userId, stateObj){
+    if (cloudSaveInFlight){
+      cloudSavePending = { userId: userId, state: stateObj };
+      return;
+    }
+    cloudSaveInFlight = true;
+    cloudSaveNow(userId, stateObj).then(function(){
+      cloudSaveInFlight = false;
+      var next = cloudSavePending;
+      cloudSavePending = null;
+      if (next) cloudSave(next.userId, next.state);
+    });
+  }
+  async function cloudSaveNow(userId, stateObj){
     if (!sb) return;
     setSaveStatus("저장 중…");
     try {
@@ -3047,6 +3069,9 @@
   // 앵커(오늘 실제로 거는 주문) 여러 개 + 폭락 대비 사다리 하나를 함께 그린다.
   function muBuyPlanHtml(buy, avgCost){
     if (!buy || !buy.anchors || !buy.anchors.length){
+      if (buy && buy.reason === "nobudget"){
+        return '<div class="footnote">오늘 매수할 금액이 없어요 — 분할을 다 썼거나(T가 분할수에 닿음) 잔금이 남아있지 않아요. 매도로 잔금이 생기면 다시 계산돼요.</div>';
+      }
       return '<div class="footnote">기준가가 없어 계산할 수 없어요 — 카드를 눌러 들어가서 기준가를 직접 넣어주세요.</div>';
     }
     var html = buy.anchors.map(function(a){
@@ -5020,8 +5045,11 @@
   // 무관하다. 전반전처럼 앵커가 둘(★지점·평단)일 때 앵커마다 사다리를 따로
   // 만들면 완전히 같은 사다리가 두 벌 생기고, 급락하면 양쪽이 다 체결돼
   // 1회 매수액의 두 배를 사게 된다. 사다리는 전체 금액 기준으로 하나만 만든다.
+  // 매수표가 비면 이유가 둘 중 하나다 — 쓸 돈이 없거나(분할 소진·잔금 0),
+  // 가격을 못 구했거나(평단도 시세도 없는 첫 매수). 예전엔 어느 쪽이든 "기준가를
+  // 넣어주세요"라고만 해서, 분할을 다 쓴 사람에게 엉뚱한 안내가 나갔다.
   function muBuildBuyPlan(anchors, budget){
-    if (!(budget > 0)) return { anchors: [], crash: [] };
+    if (!(budget > 0)) return { anchors: [], crash: [], reason: "nobudget" };
     var rows = [], cum = 0;
     anchors.forEach(function(a){
       if (!(a.price > 0) || !(a.share > 0)) return;
@@ -5029,7 +5057,7 @@
       rows.push({ label: a.label, price: round2(a.price), qty: q });
       cum += q;
     });
-    if (!rows.length) return { anchors: [], crash: [] };
+    if (!rows.length) return { anchors: [], crash: [], reason: "noprice" };
     // 사다리는 "더 떨어졌을 때" 걸리는 주문이므로 가장 낮은 앵커보다 아래만
     // 남긴다. 앵커를 절반씩 나눠 걸면 전체 금액 기준 사다리의 첫 칸이 앵커보다
     // 위에 나올 수 있는데, 그건 이미 앵커가 담당하는 구간이다.
