@@ -1221,6 +1221,26 @@
     }
   }
 
+  // 서버 사본을 받아들이되, 그게 지금 화면보다 적으면 말없이 바꾸지 않는다.
+  // 다른 기기가 옛 사본을 올렸을 때 이쪽 기록이 조용히 사라지는 걸 막는 자리다.
+  // 받아들였으면 true, 사용자가 이 기기 것을 지키기로 했으면 false.
+  function adoptCloudMaybeSmaller(cloud){
+    var lost = recordCount(state) - recordCount(cloud);
+    if (lost > 0){
+      stashBackup(currentUserId, state, "서버 사본을 받기 전 이 기기 기록");
+      if (!confirm("다른 기기에서 저장한 기록이 있는데, 지금 이 기기 기록보다 " + lost + "개 적어요.\n\n" +
+        "다른 기기가 옛 기록을 올렸을 수 있어요.\n\n" +
+        "[확인] 그 기록을 받아옵니다 (지금 기록은 [기록 복구]에 남겨뒀어요)\n" +
+        "[취소] 지금 이 기기 기록을 그대로 두고, 서버에 다시 올립니다")){
+        saveState();
+        setSaveStatus("이 기기 기록을 지키고 서버에 다시 올렸어요");
+        return false;
+      }
+    }
+    adoptCloudState(cloud, true);
+    return true;
+  }
+
   // 탭을 다시 볼 때마다 서버가 더 최신인지 본다. 예전엔 돌아올 때마다 앱을 통째로
   // 다시 띄우면서 이 확인이 저절로 됐는데, 입력값이 날아가는 걸 막느라 그 재부팅을
   // 없애면서 확인까지 같이 사라졌다. 그 사이 이 탭은 아침 사본을 든 채로 저장을
@@ -1233,21 +1253,7 @@
       var cloud = await cloudLoad(currentUserId);
       if (!cloud) return;
       if (stateAt(cloud) <= stateAt(state)) { lastServerAt = stateAt(cloud); return; }
-      // 시각은 더 최신인데 기록이 확 줄어든 사본이면, 다른 기기가 옛 사본을
-      // 올려버린 것이다. 말없이 받아오면 화면에서 기록이 사라진다 — 묻고 받는다.
-      var lost = recordCount(state) - recordCount(cloud);
-      if (lost > 0){
-        stashBackup(currentUserId, state, "서버 사본을 받기 전 이 기기 기록");
-        if (!confirm("다른 기기에서 저장한 기록이 있는데, 지금 이 화면보다 " + lost + "개 적어요.\n\n" +
-          "다른 기기가 옛 기록을 올렸을 수 있어요.\n\n" +
-          "[확인] 그 기록을 받아옵니다 (지금 화면 기록은 [기록 복구]에 남겨뒀어요)\n" +
-          "[취소] 지금 이 화면 기록을 그대로 두고, 서버에 다시 올립니다")){
-          saveState();
-          setSaveStatus("이 기기 기록을 지키고 서버에 다시 올렸어요");
-          return;
-        }
-      }
-      adoptCloudState(cloud, true);
+      if (!adoptCloudMaybeSmaller(cloud)) return;
       setSaveStatus("다른 기기에서 저장한 기록을 불러왔어요");
     } finally { cloudSyncing = false; }
   }
@@ -1310,8 +1316,10 @@
           cloudSave(currentUserId, state);
           setSaveStatus("이 기기 기록이 더 최신이라 서버에 올렸어요");
         } else {
-          adoptCloudState(cloud, true);
-          pendingCloudPush = false;   // 받아온 걸 그대로 되올릴 필요는 없다
+          // 서버가 더 최신이어도 기록이 적으면 묻는다. 앱을 켤 때도 같은 규칙이
+          // 걸려야 한다 — 예전엔 이 자리만 빠져 있어서, 다른 기기가 옛 사본을
+          // 올려둔 다음 날 앱을 켜면 그대로 받아와 화면에서 기록이 사라졌다.
+          if (adoptCloudMaybeSmaller(cloud)) pendingCloudPush = false;
           markCloudReconciled();
         }
       } else {

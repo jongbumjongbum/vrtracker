@@ -3,8 +3,25 @@
    끼워 넣어서 로그인된 상태로 바로 띄운다. */
 (function(){
   var USER = { id: "test-user-1", email: "ljb901220@gmail.com" };
+  // 서버에 저장된 state. 새로고침을 넘겨도 남아야 기기 간 동기화를 시험할 수
+  // 있어서 localStorage 에 함께 둔다 (진짜 서버 대신).
   var cloudRow = null;
-  var upsertCount = 0;          // 서버에 저장된 state (처음엔 없음)
+  try { cloudRow = JSON.parse(localStorage.getItem('__fakeCloud') || 'null'); } catch(e){}
+  window.__getCloud = function(){ return cloudRow; };
+  // 서버 기록이 도중에 얼마나 줄었는지 — 부팅 중에 옛 사본이 잠깐이라도
+  // 올라갔는지 잡아내는 데 쓴다.
+  window.__minCloudCount = null;
+  function countRecords(st){
+    if (!st) return 0;
+    var n = 0;
+    (st.instances||[]).forEach(function(i){ n += (i.cycles||[]).length; });
+    (st.muInstances||[]).forEach(function(i){ n += (i.days||[]).length; });
+    var pf = st.portfolio || {};
+    (pf.holdings||[]).forEach(function(h){ n += (h.trades||[]).length; });
+    n += (pf.manualRealized||[]).length + (pf.cashLog||[]).length + (pf.assetSnapshots||[]).length;
+    return n;
+  }
+  var upsertCount = 0;
   window.__testLog = [];
   function log(){ window.__testLog.push(Array.prototype.slice.call(arguments).join(" ")); }
 
@@ -51,8 +68,11 @@
                 if (table === "vr_data"){
                   cloudRow = body;
                   window.__cloud = body;
-                  window.__netSeq.push("upsert" + seq + ":land@" + body.updatedAt + "/" + body.pnlPreset);
-                  log("cloudSave", JSON.stringify(body).length + "B");
+                  try { localStorage.setItem('__fakeCloud', JSON.stringify(body)); } catch(e){}
+                  var cnt = countRecords(body);
+                  if (window.__minCloudCount === null || cnt < window.__minCloudCount) window.__minCloudCount = cnt;
+                  window.__netSeq.push("upsert" + seq + ":land@" + body.updatedAt + "/" + cnt + "건");
+                  log("cloudSave", cnt + "건");
                 }
                 return { error: null };
               });
