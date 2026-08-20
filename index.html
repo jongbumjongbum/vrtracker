@@ -3614,20 +3614,25 @@
         });
       });
     });
-    // 무매 체결도 같은 계좌의 현금을 움직인다. cashApplied 가 붙은 날 —
-    // 예수금 자동 반영이 생긴 뒤에 기록한 날 — 만 넣는다. 그 전 기록들은
-    // 사용자가 이미 손으로 맞춰둔 잔액에 녹아 있어서 여기 또 세면 안 맞는다.
+    // 무매 체결도 같은 계좌의 현금을 움직인다. 다만 예수금 자동 반영이 생기기
+    // (2026-08-19) 전에 적은 날은 그 금액이 이미 손으로 맞춰둔 잔액에 녹아
+    // 있을 수 있어서 다시 더하지 않는다 — 그렇다고 줄을 아예 안 보여주면,
+    // 기록해둔 매매가 통째로 사라진 것처럼 보인다. 보여주되 "예수금 미반영"
+    // 이라고 적고, 반영할지는 사용자가 고르게 한다.
+    var muUnapplied = [];
     state.muInstances.forEach(function(m){
       (m.days||[]).forEach(function(d){
-        if (!d.cashApplied) return;
         (d.fills||[]).forEach(function(f){
+          var amt = (f.type === "buy" ? -1 : 1) * f.qty * f.price;
           derivedCashRows.push({
             date: d.date,
             kind: f.type === "buy" ? "매수" : "매도",
-            amount: (f.type === "buy" ? -1 : 1) * f.qty * f.price,
+            amount: amt,
+            applied: !!d.cashApplied,
             note: "무매 " + m.ticker + " " + f.qty + "주 " + (f.type === "buy" ? "매수" : "매도")
           });
         });
+        if (!d.cashApplied && (d.fills||[]).length) muUnapplied.push({ inst: m, day: d });
       });
     });
     var allCashRows = state.portfolio.cashLog
@@ -3636,14 +3641,34 @@
       .concat(derivedCashRows)
       .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     var cashLogRows = allCashRows.slice().reverse().map(function(e){
-      var color = e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)");
+      var pending = (e.applied === false);
+      var color = pending ? "var(--muted)"
+        : (e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)"));
       return '<tr><td data-label="날짜">' + fmtDate(e.date) + '</td><td data-label="구분">' + escapeHtml(e.kind) + '</td>' +
         '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtCurrency(e.amount) + '</td>' +
-        '<td data-label="메모">' + escapeHtml(e.note||"") + '</td>' +
+        '<td data-label="메모">' + escapeHtml(e.note||"") +
+          (pending ? ' <span class="footnote" style="display:inline;color:var(--accent-ink);">예수금 미반영</span>' : '') + '</td>' +
         '<td class="col-action">' + (e.canDelete
           ? ('<button type="button" class="btn btn-sm btn-ghost btn-danger cash-del" data-id="' + e.id + '">삭제</button>')
           : '<span class="footnote">자동</span>') + '</td></tr>';
     }).join("");
+    // 아직 예수금에 안 들어간 무매 체결이 있으면, 얼마인지 보여주고 반영할 수
+    // 있게 한다. 자동으로 더하지 않는 건 이미 손으로 맞춰둔 잔액과 두 번
+    // 겹칠 수 있어서다 — 그 판단은 사용자만 할 수 있다.
+    var unappliedSum = 0;
+    muUnapplied.forEach(function(x){
+      (x.day.fills||[]).forEach(function(f){ unappliedSum += (f.type === "buy" ? -1 : 1) * f.qty * f.price; });
+    });
+    var unappliedBox = muUnapplied.length
+      ? ('<div class="limit-box" style="margin-top:14px;">' +
+         '<div class="limit-line"><b>예수금에 아직 반영 안 된 무매 체결이 ' + muUnapplied.length + '일치 있어요</b> (합계 ' +
+         fmtCurrency(unappliedSum) + ').<br>' +
+         '예수금 자동 반영이 생기기 전(8월 19일 이전)에 적은 기록이에요. 그때는 "그외 예수금"을 직접 맞추셨을 테니, ' +
+         '여기서 또 더하면 두 번 빠질 수 있어 자동으로는 안 넣었어요.<br>' +
+         '증권사 예수금과 지금 숫자가 안 맞으면 아래 버튼으로 반영하세요.</div>' +
+         '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;">' +
+         '<button type="button" class="btn" id="muApplyCashBtn">이 체결들을 예수금에 반영하기</button></div></div>')
+      : '';
     cashLogCard.innerHTML = "<h3>VR 외 예수금 변동내역</h3>" +
       '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. "직접 추가한 종목"과 "무매"에서 매수/매도를 기록해도 여기 자동으로 남아요 — 자동으로 생긴 줄은 그 기록을 고치면 같이 바뀌니 여기서 따로 지울 수 없어요.</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);align-items:end;">' +
@@ -3653,8 +3678,25 @@
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
       '</div>' +
       (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th><th class="col-action"></th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
-        : '<div class="chart-empty" style="margin-top:14px;">아직 기록이 없어요.</div>');
+        : '<div class="chart-empty" style="margin-top:14px;">아직 기록이 없어요.</div>') +
+      unappliedBox;
     mainArea.appendChild(cashLogCard);
+
+    var muApplyBtn = document.getElementById("muApplyCashBtn");
+    if (muApplyBtn){
+      muApplyBtn.addEventListener("click", function(){
+        if (!confirm("무매 체결 " + muUnapplied.length + "일치를 \"그외 예수금\"에 반영합니다.\n\n" +
+          "예수금이 " + fmtCurrency(unappliedSum) + " 만큼 움직여요.\n" +
+          (unappliedSum < 0 ? "(매수가 많아 예수금이 줄어듭니다)\n" : "") +
+          "\n이미 손으로 맞춰두신 금액이라면 두 번 빠지게 되니, 증권사 예수금과 비교해보고 결정해주세요.\n" +
+          "되돌리려면 [기록 복구]를 쓰시면 돼요.")) return;
+        stashBackup(currentUserId, state, "무매 체결 예수금 반영 직전");
+        muUnapplied.forEach(function(x){ x.day.cashApplied = true; });
+        state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + unappliedSum);
+        saveState();
+        renderMain();
+      });
+    }
 
     document.getElementById("cashLogAddBtn").addEventListener("click", function(){
       var type = document.getElementById("cashLogType").value;
