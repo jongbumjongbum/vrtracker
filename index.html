@@ -1597,11 +1597,38 @@
         forceG: c.G
       });
       res.id = c.id;
+      res.depositApplied = c.depositApplied;
       if (res.sellClamped) clampedDates.push(c.date);
       prev = res;
       return res;
     });
     return clampedDates;
+  }
+
+  /* --- VR 적립·인출과 "그외 예수금" ------------------------------------------
+     증권사 계좌의 예수금은 하나다. VR에 적립한다는 건 새 돈이 들어오는 게
+     아니라 계좌 안에서 "그외" 쪽 현금을 VR Pool 로 옮기는 것이다. 그래서
+     적립하면 그외 예수금이 그만큼 줄고, 계좌 전체 예수금(예수금 합계)은
+     그대로여야 한다. 인출식은 반대로 그외 예수금이 늘어난다.
+     depositApplied 가 붙은 사이클만 센다 — 이 규칙이 생기기 전 기록들은
+     이미 사용자가 손으로 맞춰둔 잔액에 녹아 있어서 다시 세면 두 번 빠진다. */
+  function vrAppliedDeposits(inst){
+    var sum = 0;
+    (inst.cycles || []).forEach(function(c){
+      if (c.depositApplied) sum += Number(c.deposit || 0);
+    });
+    return round4(sum);
+  }
+  // 사이클을 고치면서 그외 예수금도 같이 따라가게 한다.
+  function mutateVrCycles(inst, mutate){
+    var before = vrAppliedDeposits(inst);
+    var clamped = mutate();
+    var after = vrAppliedDeposits(inst);
+    if (after !== before){
+      // VR 로 간 돈만큼 그외에서 빠진다 (부호가 반대다).
+      state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) - (after - before));
+    }
+    return clamped;
   }
   // 다시 계산한 결과가 말이 안 되면 (가진 것보다 많이 판 상태) 알려준다.
   function warnIfNegativeQty(dates){
@@ -1745,6 +1772,17 @@
     // 모로 봐도 이상해서, 한 번에 반영하고 얼마가 움직였는지 알려준다.
     // 두 번 빠질 걱정이 있으면 그 안내에서 되돌릴 수 있게 해뒀다.
     if (applyPendingMuCash() && currentUserId) muMigrated = true;
+    // VR 적립·인출을 그외 예수금에서 옮기는 규칙이 생기기 전(2026-08-21) 사이클들.
+    // 그 시절 적립금은 이미 사용자가 손으로 맞춰둔 그외 예수금에 녹아 있어서,
+    // 지금 와서 다시 빼면 두 번 빠진다. 금액은 건드리지 않고 "반영된 것"으로만
+    // 표시해서, 앞으로 그 사이클을 지우거나 고칠 때 제대로 되돌아가게 한다.
+    var vrMarked = false;
+    state.instances.forEach(function(inst){
+      (inst.cycles || []).forEach(function(c){
+        if (c.depositApplied === undefined){ c.depositApplied = true; vrMarked = true; }
+      });
+    });
+    if (vrMarked && currentUserId) muMigrated = true;
     // 한 번 표시해두면 다음 render 부터는 할 일이 없다. 표시만 하고 저장을
     // 안 하면 매번 다시 하게 되고, 다른 기기와도 어긋난다.
     if (muMigrated && currentUserId) saveState();
@@ -2741,7 +2779,10 @@
           field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 74.47" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
-          field(seg.type === "인출식" ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 안 뺐으면 0</span>' : '이번에 새로 넣은 돈 ($) <span class="hint">적립금. 안 넣었으면 0</span>', '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.0001" value="0" />') +
+          field(seg.type === "인출식"
+            ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 그만큼 "그외 예수금"으로 돌아가요. 안 뺐으면 0</span>'
+            : '이번에 VR로 옮긴 돈 ($) <span class="hint">적립금. 그만큼 "그외 예수금"에서 빠지고 예수금 합계는 그대로예요. 안 넣었으면 0</span>',
+            '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.0001" value="0" />') +
           field("SPY 종가 (선택)", '<input id="cy_spy" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
           field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
         '</div>' +
@@ -2810,9 +2851,15 @@
         var msg = fmtDate(target.date) + " 사이클 기록을 삭제할까요?";
         if (after > 0) msg += "\n\n뒤에 있는 " + after + "개 사이클의 V·Pool·밴드가 이 기록을 기준으로 계산돼 있어서, 삭제 후 자동으로 다시 계산돼요.";
         if (inst.realAvgCost != null) msg += "\n\n※ 실제평단은 자동으로 되돌아가지 않아요 — 삭제 후 직접 확인해주세요.";
+        if (target.depositApplied && target.deposit){
+          msg += "\n\n이 사이클의 " + (target.deposit > 0 ? "적립금 " : "인출금 ") + fmtMoney0(Math.abs(target.deposit)) +
+            "도 \"그외 예수금\"에서 원래대로 돌아가요.";
+        }
         if (!confirm(msg)) return;
-        inst.cycles.splice(idx, 1);
-        warnIfNegativeQty(replayCycles(inst));
+        warnIfNegativeQty(mutateVrCycles(inst, function(){
+          inst.cycles.splice(idx, 1);
+          return replayCycles(inst);
+        }));
         delete historyView[inst.id];
         delete sellLadderExpand[inst.id];
         saveState();
@@ -2839,11 +2886,13 @@
           alert("날짜는 YYYY-MM-DD 형식, 종가는 0보다 큰 숫자, 금액은 숫자여야 해요.");
           return;
         }
-        c.date = nd;
-        c.price = np;
-        c.deposit = currentSegment(inst, nd).type === "인출식" ? -Math.abs(ndep) : ndep;
-        inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-        warnIfNegativeQty(replayCycles(inst));
+        warnIfNegativeQty(mutateVrCycles(inst, function(){
+          c.date = nd;
+          c.price = np;
+          c.deposit = currentSegment(inst, nd).type === "인출식" ? -Math.abs(ndep) : ndep;
+          inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+          return replayCycles(inst);
+        }));
         delete historyView[inst.id];
         delete sellLadderExpand[inst.id];
         saveState();
@@ -2967,9 +3016,14 @@
       }
       var res = computeCycle(inst, last, {date:date, closePrice:close, fills:fills, deposit:dep, spy:spyEl.value, qqq:qqqEl.value});
       applyFillsToRealAvgCost(inst, fills, last.qty);
-      inst.cycles.push(res);
-      inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-      warnIfNegativeQty(replayCycles(inst));
+      // 적립금은 새로 들어온 돈이 아니라 계좌 안에서 옮기는 돈이라,
+      // 그만큼 "그외 예수금"에서 빠져야 계좌 전체 예수금이 그대로 남는다.
+      res.depositApplied = true;
+      warnIfNegativeQty(mutateVrCycles(inst, function(){
+        inst.cycles.push(res);
+        inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+        return replayCycles(inst);
+      }));
       currentSegment(inst, date).gDeferred = false;
       delete sellLadderExpand[inst.id];
       delete historyView[inst.id];
@@ -3658,6 +3712,19 @@
         });
       });
     });
+    // VR 적립·인출도 계좌 안에서 오간 돈이라 여기 남는다. 적립하면 그외에서
+    // 빠져 VR Pool 로 가고, 인출하면 반대로 돌아온다.
+    state.instances.forEach(function(inst){
+      (inst.cycles||[]).forEach(function(c){
+        if (!c.depositApplied || !c.deposit) return;
+        derivedCashRows.push({
+          date: c.date,
+          kind: c.deposit > 0 ? "VR 적립" : "VR 인출",
+          amount: -Number(c.deposit),
+          note: inst.name + (c.deposit > 0 ? " 로 옮김" : " 에서 회수")
+        });
+      });
+    });
     var allCashRows = state.portfolio.cashLog
       .filter(function(e){ return e.kind === "입금" || e.kind === "출금"; })
       .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: true }; })
@@ -3683,7 +3750,10 @@
          '그럴 땐 위 "그외 예수금" 칸을 증권사 숫자로 고치시거나, [기록 복구]에서 되돌리시면 돼요.</div></div>')
       : '';
     cashLogCard.innerHTML = "<h3>VR 외 예수금 변동내역</h3>" +
-      '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. "직접 추가한 종목"과 "무매"에서 매수/매도를 기록해도 여기 자동으로 남아요 — 자동으로 생긴 줄은 그 기록을 고치면 같이 바뀌니 여기서 따로 지울 수 없어요.</div>' +
+      '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. "직접 추가한 종목"과 "무매"의 매수/매도, ' +
+      '그리고 <b>VR 적립·인출</b>도 여기 자동으로 남아요 — 자동으로 생긴 줄은 그 기록을 고치면 같이 바뀌니 여기서 따로 지울 수 없어요.<br>' +
+      'VR에 적립하는 건 새 돈이 들어오는 게 아니라 <b>계좌 안에서 그외 → VR Pool 로 옮기는 것</b>이라, 그만큼 그외 예수금이 줄고 ' +
+      '<b>예수금 합계는 그대로</b>예요. 계좌에 돈을 새로 넣으셨으면 아래 [입금]으로 따로 적어주세요.</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);align-items:end;">' +
         field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
         field("금액 (" + curSymbol() + ")", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" />') +

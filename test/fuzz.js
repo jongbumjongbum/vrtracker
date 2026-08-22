@@ -113,8 +113,14 @@
         (d.fills||[]).forEach(function(f){ expected += (f.type==='buy'?-1:1) * f.qty * f.price; });
       });
     });
+    // VR 적립·인출은 계좌 안에서 옮기는 돈이라, 적립하면 그외에서 빠진다.
+    (s.instances||[]).forEach(function(inst){
+      (inst.cycles||[]).forEach(function(c){
+        if (c.depositApplied) expected -= Number(c.deposit || 0);
+      });
+    });
     if (!near(pf.extraCash || 0, expected, 0.05)){
-      bad.push('그외 예수금(' + (pf.extraCash||0).toFixed(2) + ') != 입출금·매매 누적(' + expected.toFixed(2) + ')');
+      bad.push('그외 예수금(' + (pf.extraCash||0).toFixed(2) + ') != 입출금·매매·VR적립 누적(' + expected.toFixed(2) + ')');
     }
     return bad;
   }
