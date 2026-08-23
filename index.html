@@ -2492,11 +2492,18 @@
       var card = document.createElement("button");
       card.type = "button";
       card.className = "instance-card" + (inst.id === state.selectedId && state.viewMode === "vr" ? " active" : "");
-      var progress = inst.goalAmount ? Math.min(100, (tot/inst.goalAmount)*100) : null;
+      // 막대만 있으면 "어디까지 왔는지"는 보여도 "얼마가 목표인지"를 알 수 없다.
+      // 목표 금액과 몇 %인지를 숫자로 같이 적어준다.
+      var pct = inst.goalAmount ? (tot / inst.goalAmount) * 100 : null;
+      var barPct = pct != null ? Math.min(100, pct) : null;
       card.innerHTML =
         '<div class="row1"><span class="iname">' + escapeHtml(inst.name) + '</span>' + typeChip(seg.type) + cycleDueChip(inst, last) + '</div>' +
         '<div class="meta"><span>' + escapeHtml(inst.ticker) + '</span><span class="num">' + fmtMoney0(tot) + '</span></div>' +
-        (progress != null ? '<div class="progress-track"><div class="progress-fill" style="width:' + progress.toFixed(0) + '%"></div></div>' : '');
+        (barPct != null
+          ? ('<div class="progress-track"><div class="progress-fill" style="width:' + barPct.toFixed(0) + '%"></div></div>' +
+             '<div class="meta"><span>목표 <span class="num">' + fmtMoney0(inst.goalAmount) + '</span></span>' +
+             '<span class="num" style="font-weight:700;color:var(--accent-ink);">' + fmtPct(pct, 1) + '</span></div>')
+          : '<div class="meta"><span class="footnote" style="margin:0;">목표 미설정</span></div>');
       card.addEventListener("click", function(){ state.selectedId = inst.id; state.viewMode = "vr"; saveState(); render(); });
       instanceList.appendChild(card);
     });
@@ -2813,12 +2820,13 @@
       '<h3>전환 시점 참고 지표</h3>' +
       '<div class="card-desc">전환은 자동으로 되지 않아요 — 아래 숫자를 참고해서 직접 판단하고 위의 "운용방식 전환" 버튼을 눌러주세요.</div>' +
       '<div class="transition-grid">' +
-        metricBox("최종 목표 대비 진행률", inst.goalAmount ? fmtPct(goalPct,1) : "목표 미설정", inst.goalAmount ? ("적립식→거치식→인출식 통틀어 최종목표 " + fmtMoney0(inst.goalAmount) + " 기준") : "새 VR 설정에서 최종 목표 금액을 넣어보세요") +
+        metricBoxGoal(inst, goalPct) +
         metricBox("현재 Pool 비중", fmtPct(poolRatio,1), "거치식 권장 ≈50% · 인출식 권장 ≈75%") +
         metricBoxWithdrawCalc(tot) +
       '</div>';
     mainArea.appendChild(tcard);
     wireWithdrawCalc(tot);
+    wireGoalInput(inst);
 
     // band chart
     var chartCard1 = document.createElement("div");
@@ -5110,6 +5118,29 @@
   function metricBox(label, value, note){
     return '<div class="metric-box"><div class="m-label">' + label + '</div><div class="m-value num">' + value + '</div><div class="m-note">' + note + '</div></div>';
   }
+  // 최종 목표 금액은 만들 때만 넣을 수 있고 나중에 바꿀 수가 없었다. 목표는
+  // 굴리면서 달라지는 값인데 바꾸려면 VR 을 새로 만드는 수밖에 없었다.
+  function metricBoxGoal(inst, goalPct){
+    return '<div class="metric-box">' +
+      '<div class="m-label">최종 목표 대비 진행률</div>' +
+      '<div class="m-value num">' + (inst.goalAmount ? fmtPct(goalPct, 1) : "–") + '</div>' +
+      '<div class="field" style="margin-top:8px;"><label style="font-size:11px;">최종 목표 금액 ($)</label>' +
+        '<input id="goalAmountInput" type="number" autocomplete="off" inputmode="decimal" step="1" ' +
+        'class="cell-input" style="width:100%;" value="' + (inst.goalAmount != null ? inst.goalAmount : "") + '" placeholder="예: 50000" /></div>' +
+      '<div class="m-note">적립식→거치식→인출식 다 거친 최종 목표예요. 비워두면 진행률을 안 보여줘요.</div>' +
+      '</div>';
+  }
+  function wireGoalInput(inst){
+    var el = document.getElementById("goalAmountInput");
+    if (!el) return;
+    el.addEventListener("change", function(){
+      var v = parseFloat(this.value);
+      inst.goalAmount = (v > 0) ? v : null;
+      saveState();
+      render();
+    });
+  }
+
   function metricBoxWithdrawCalc(tot){
     return '<div class="metric-box">' +
       '<div class="m-label">인출식 전환 시 예상 연 인출률</div>' +
