@@ -1499,8 +1499,13 @@
     var qtyEnd = Qprev + deltaQty;
     var E = round2(qtyEnd * input.closePrice);
     var raw = Vprev + (Poolprev / G) + ((E - Vprev) / (2 * Math.sqrt(G)));
-    var Vnext = round2(raw) + Number(input.deposit || 0);
-    var Pool = round2(Poolprev + Number(input.deposit || 0) + tradeCash);
+    // 배당금은 적립(deposit)과 달리 "그외 예수금"에서 옮겨온 돈이 아니라 이
+    // VR 안에서 새로 생긴 돈이라, depositApplied 로 세지 않는다 (그래서
+    // vrAppliedDeposits/그외 예수금 정산에서 빠진다) — 그래도 Pool·V 에는
+    // 적립과 똑같이 반영돼야 실제로 쓸 수 있는 현금이자 총자산이 된다.
+    var dividend = Number(input.dividend || 0);
+    var Vnext = round2(raw) + Number(input.deposit || 0) + dividend;
+    var Pool = round2(Poolprev + Number(input.deposit || 0) + tradeCash + dividend);
     var band = inst.band || {low:0.85, high:1.15};
     var buyBandPrev = round2(Vprev * band.low);
     var sellBandPrev = round2(Vprev * band.high);
@@ -1514,7 +1519,8 @@
     return {
       id: uid(), date: input.date, price: input.closePrice, qty: qtyEnd, E: E,
       fills: fills.map(function(f){ return { type: f.type, qty: f.qty, price: f.price }; }),
-      deposit: Number(input.deposit||0), G: G, Vprev: Vprev, Vnext: Vnext,
+      deposit: Number(input.deposit||0), dividend: dividend, dividendNote: input.dividendNote || "",
+      G: G, Vprev: Vprev, Vnext: Vnext,
       Pool: Pool, PoolPrev: Poolprev, deltaQty: deltaQty, tradeCash: tradeCash,
       buyBandPrev: buyBandPrev, sellBandPrev: sellBandPrev, signal: signal,
       buyBandNext: buyBandNext, sellBandNext: sellBandNext, sellClamped: sellClamped,
@@ -1592,6 +1598,8 @@
         closePrice: c.price,
         fills: (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c),
         deposit: c.deposit,
+        dividend: c.dividend,
+        dividendNote: c.dividendNote,
         spy: c.spy,
         qqq: c.qqq,
         forceG: c.G
@@ -1814,6 +1822,34 @@
   function pushCashLog(kind, amount, date, note){
     state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "" });
     state.portfolio.cashLog.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+  }
+
+  // VR로 들어온 배당금을 그 VR의 Pool에 반영한다. 체결도 적립도 없는 "배당만
+  // 있는" 사이클 하나를 이어붙이는 방식이라 — 가격은 마지막 사이클(또는 초기값)
+  // 걸 그대로 이어받아서 수량·평가금은 안 흔들리고 Pool·V만 배당금만큼 는다.
+  // depositApplied 를 안 붙이므로 "그외 예수금"은 전혀 건드리지 않는다.
+  function addVrDividendCycle(inst, date, amount, note){
+    var last = lastState(inst);
+    // 종가는 이 날짜 바로 앞 사이클 걸 이어받는다 (그래야 과거 날짜로 끼워
+    // 넣어도 그 시점 가격으로 남지, 항상 최신 종가로 덮어써지지 않는다).
+    var priorCycles = inst.cycles.filter(function(c){ return c.date <= date; });
+    var basePrice = priorCycles.length ? priorCycles[priorCycles.length-1].price : inst.initPrice;
+    var lastDate = inst.cycles.length ? inst.cycles[inst.cycles.length-1].date : null;
+    var inserting = !!(lastDate && date < lastDate);
+    if (inserting){
+      if (!confirm("입력한 날짜(" + fmtDate(date) + ")가 마지막 사이클(" + fmtDate(lastDate) + ")보다 앞서요.\n\n" +
+        "이 배당금 기록을 중간에 끼워 넣고, 뒤에 있는 사이클들을 전부 다시 계산할까요?")) return false;
+    }
+    var res = computeCycle(inst, last, {
+      date: date, closePrice: basePrice, fills: [], deposit: 0,
+      dividend: amount, dividendNote: note || "",
+      spy: last.spy, qqq: last.qqq
+    });
+    res.depositApplied = false;
+    inst.cycles.push(res);
+    inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+    warnIfNegativeQty(replayCycles(inst));
+    return true;
   }
 
   /* --- 직접입력 종목의 거래 수정/삭제 ---------------------------------------
@@ -2863,6 +2899,9 @@
           msg += "\n\n이 사이클의 " + (target.deposit > 0 ? "적립금 " : "인출금 ") + fmtMoney0(Math.abs(target.deposit)) +
             "도 \"그외 예수금\"에서 원래대로 돌아가요.";
         }
+        if (target.dividend){
+          msg += "\n\n이 사이클의 배당금 " + fmtMoney0(target.dividend) + "도 이 VR의 Pool에서 같이 빠져요.";
+        }
         if (!confirm(msg)) return;
         warnIfNegativeQty(mutateVrCycles(inst, function(){
           inst.cycles.splice(idx, 1);
@@ -3734,7 +3773,7 @@
       });
     });
     var allCashRows = state.portfolio.cashLog
-      .filter(function(e){ return e.kind === "입금" || e.kind === "출금"; })
+      .filter(function(e){ return e.kind === "입금" || e.kind === "출금" || e.kind === "배당금"; })
       .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: true }; })
       .concat(derivedCashRows)
       .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
@@ -3761,24 +3800,53 @@
       '<div class="card-desc">입금/출금을 기록하면 위 "VR 외 예수금"에 자동 반영돼요. "직접 추가한 종목"과 "무매"의 매수/매도, ' +
       '그리고 <b>VR 적립·인출</b>도 여기 자동으로 남아요 — 자동으로 생긴 줄은 그 기록을 고치면 같이 바뀌니 여기서 따로 지울 수 없어요.<br>' +
       'VR에 적립하는 건 새 돈이 들어오는 게 아니라 <b>계좌 안에서 그외 → VR Pool 로 옮기는 것</b>이라, 그만큼 그외 예수금이 줄고 ' +
-      '<b>예수금 합계는 그대로</b>예요. 계좌에 돈을 새로 넣으셨으면 아래 [입금]으로 따로 적어주세요.</div>' +
+      '<b>예수금 합계는 그대로</b>예요. 계좌에 돈을 새로 넣으셨으면 아래 [입금]으로 따로 적어주세요.<br>' +
+      '<b>배당금</b>은 받은 곳을 고를 수 있어요 — "그외 예수금"을 고르면 여기 그대로 더해지고, 특정 VR을 고르면 ' +
+      '그 VR의 Pool에 더해져요 (그외 예수금은 안 건드리고, 예수금 합계는 늘어나요).</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(4,1fr);align-items:end;">' +
-        field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option></select>') +
+        field("구분", '<select id="cashLogType"><option value="in">입금</option><option value="out">출금</option><option value="dividend">배당금</option></select>') +
         field("금액 (" + curSymbol() + ")", '<input id="cashLogAmount" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" />') +
         field("날짜", '<input id="cashLogDate" type="date" autocomplete="off" value="' + todayStr() + '" />') +
         '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="cashLogAddBtn" type="button" style="width:100%;">기록추가</button></div>' +
+      '</div>' +
+      '<div class="form-grid" id="dividendTargetRow" style="grid-template-columns:repeat(2,1fr);align-items:end;margin-top:10px;display:none;">' +
+        field("받은 곳", '<select id="cashLogDividendTarget"><option value="extra">그외 예수금</option>' +
+          state.instances.map(function(inst){ return '<option value="' + inst.id + '">' + escapeHtml(inst.name) + '</option>'; }).join("") +
+          '</select>') +
+        field("메모 (선택, 종목 등)", '<input id="cashLogDividendNote" type="text" autocomplete="off" placeholder="예: AAPL" />') +
       '</div>' +
       (cashLogRows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">금액</th><th>메모</th><th class="col-action"></th></tr></thead><tbody>' + cashLogRows + '</tbody></table></div>')
         : '<div class="chart-empty" style="margin-top:14px;">아직 기록이 없어요.</div>') +
       unappliedBox;
     mainArea.appendChild(cashLogCard);
 
+    var cashLogTypeEl = document.getElementById("cashLogType");
+    var dividendTargetRow = document.getElementById("dividendTargetRow");
+    cashLogTypeEl.addEventListener("change", function(){
+      dividendTargetRow.style.display = cashLogTypeEl.value === "dividend" ? "" : "none";
+    });
+
     document.getElementById("cashLogAddBtn").addEventListener("click", function(){
-      var type = document.getElementById("cashLogType").value;
+      var type = cashLogTypeEl.value;
       var amt = parseFloat(document.getElementById("cashLogAmount").value);
       var when = document.getElementById("cashLogDate").value || todayStr();
       if (isNaN(amt) || amt <= 0){ alert("금액을 입력해주세요."); return; }
       var usd = inputValueToUsd(amt);
+      if (type === "dividend"){
+        var targetId = document.getElementById("cashLogDividendTarget").value;
+        var note = document.getElementById("cashLogDividendNote").value.trim();
+        if (targetId === "extra"){
+          state.portfolio.extraCash = round4((state.portfolio.extraCash||0) + usd);
+          pushCashLog("배당금", usd, when, note);
+        } else {
+          var targetInst = state.instances.find(function(x){ return x.id === targetId; });
+          if (!targetInst){ alert("VR을 찾을 수 없어요."); return; }
+          if (!addVrDividendCycle(targetInst, when, usd, note)) return;
+        }
+        saveState();
+        renderMain();
+        return;
+      }
       var signed = type === "in" ? usd : -usd;
       state.portfolio.extraCash = round4((state.portfolio.extraCash||0) + signed);
       pushCashLog(type === "in" ? "입금" : "출금", signed, when, "");
@@ -5691,6 +5759,7 @@
         '<td class="num" data-label="수량">' + c.qty + '</td>' +
         '<td class="num" data-label="평가금 E">' + fmtMoney0(c.E) + '</td>' +
         '<td class="num" data-label="적립/인출">' + fmtMoney0(c.deposit) + '</td>' +
+        '<td class="num" data-label="배당">' + (c.dividend ? ("+" + fmtMoney0(c.dividend)) : "–") + '</td>' +
         '<td class="num" data-label="G">' + c.G + '</td>' +
         '<td class="num" data-label="V">' + fmtMoney0(c.Vnext) + '</td>' +
         '<td class="num" data-label="다음매수↓">' + fmtMoney0(c.buyBandNext) + '</td>' +
@@ -5702,7 +5771,7 @@
     }).join("");
     return '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
       '<th>사이클 시작일</th><th>다음 시작 예정</th><th>신호</th><th>체결내역</th><th class="num">종가</th><th class="num">수량</th><th class="num">평가금 E</th>' +
-      '<th class="num">적립/인출</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th class="col-action"></th>' +
+      '<th class="num">적립/인출</th><th class="num">배당</th><th class="num">G</th><th class="num">V</th><th class="num">다음매수↓</th><th class="num">다음매도↑</th><th class="num">Pool</th><th class="col-action"></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
       '<div class="footnote" style="margin-top:6px;">각 줄의 날짜는 <b>그 사이클이 시작된 날</b>이에요. 그 줄의 V·밴드는 이 사이클 동안 쓰는 기준값이고, 다음 줄은 "다음 시작 예정"일에 입력하면 돼요.</div>' +
       '<div class="footnote" style="margin-top:4px;">[수정]은 날짜·종가·적립금만 고쳐요. 체결내역(수량·가격)을 바꾸려면 그 줄을 삭제하고 다시 입력해주세요. 어느 쪽이든 뒤 사이클의 V·Pool·밴드는 자동으로 다시 계산돼요.</div>';
@@ -6470,6 +6539,8 @@
           }
         });
         if (c.deposit) push(c.date, "VR", inst.name, inst.ticker, c.deposit > 0 ? "적립" : "인출", null, null, null, fmtMoney0(c.deposit));
+        if (c.dividend) push(c.date, "VR", inst.name, inst.ticker, "배당금", null, null, null,
+          fmtMoney0(c.dividend) + (c.dividendNote ? (" " + c.dividendNote) : ""));
       });
     });
     state.muInstances.forEach(function(inst){
