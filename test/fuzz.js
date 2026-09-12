@@ -99,6 +99,44 @@
       for (var i=1;i<(h.trades||[]).length;i++){
         if (h.trades[i-1].date > h.trades[i].date) bad.push(tag + ' 거래가 날짜순이 아님');
       }
+      // 원화 원가 — index.html 의 computeKrwBasis 와 같은 규칙을 따로 적는다.
+      // 한쪽만 고치면 여기서 어긋나므로 규칙이 조용히 갈라지지 않는다.
+      var kq = h.krwSeedQty || 0, kc = h.krwSeedCost || 0, q2 = 0;
+      (h.trades||[]).forEach(function(t){
+        if (t.type === 'buy'){
+          q2 += t.qty;
+          if (t.krwAmount > 0){ kq += t.qty; kc += t.krwAmount; }
+        } else {
+          var sq = Math.min(t.qty, q2), f = q2 > 0 ? sq/q2 : 0;
+          kq *= (1-f); kc *= (1-f); q2 -= sq;
+        }
+      });
+      if (kc < -1e-9) bad.push(tag + ' 원화 원가가 음수(' + kc + ')');
+      if (kq < -1e-9) bad.push(tag + ' 원화 기록수량이 음수(' + kq + ')');
+      if (kq > q2 + 1e-6) bad.push(tag + ' 원화 기록수량(' + kq + ') > 전체 수량(' + q2 + ')');
+    });
+
+    // 원화 매수에는 같은 금액(달러)의 자동 입금 줄이 정확히 하나 붙어 있어야 한다.
+    (pf.holdings||[]).forEach(function(h, hi){
+      (h.trades||[]).forEach(function(t){
+        var linked = (pf.cashLog||[]).filter(function(e){ return e.tradeId === t.id; });
+        var want = (t.type === 'buy' && t.krwAmount > 0);
+        if (want && linked.length !== 1){
+          bad.push('직접입력#' + hi + ' 원화매수의 짝 입금 줄이 ' + linked.length + '개');
+        } else if (!want && linked.length !== 0){
+          bad.push('직접입력#' + hi + ' 원화매수가 아닌데 짝 입금 줄이 ' + linked.length + '개');
+        } else if (want && !near(linked[0].amount, t.qty*t.price, 0.05)){
+          bad.push('직접입력#' + hi + ' 짝 입금액(' + linked[0].amount + ') != 매수액(' + (t.qty*t.price).toFixed(2) + ')');
+        }
+      });
+    });
+    // 지워진 거래의 짝 입금 줄이 남아 있으면 예수금이 그만큼 부풀어 있다.
+    var liveTradeIds = {};
+    (pf.holdings||[]).forEach(function(h){ (h.trades||[]).forEach(function(t){ liveTradeIds[t.id] = true; }); });
+    (pf.cashLog||[]).forEach(function(e){
+      if (e.tradeId && !liveTradeIds[e.tradeId]){
+        bad.push('없어진 거래의 짝 입금 줄이 남아 있음 (' + e.tradeId + ')');
+      }
     });
 
     // 그외 예수금 = 입출금 + 직접입력 매매 + (반영된) 무매 매매
@@ -270,9 +308,12 @@
       if (!sel.options.length) return 'skip';
       sel.selectedIndex = Math.floor(rand()*sel.options.length);
       sel.dispatchEvent(new Event('change',{bubbles:true}));
-      set('tr_type', rand() < 0.35 ? 'sell' : 'buy');
+      var isSell = rand() < 0.35;
+      set('tr_type', isSell ? 'sell' : 'buy');
       set('tr_qty', 1 + Math.floor(rand()*20));
       set('tr_price', (20 + rand()*300).toFixed(2));
+      // 원화로 산 매수도 섞는다 — 예수금 상쇄와 원화 원가가 같이 굴러가는지 본다.
+      set('tr_krw', (!isSell && rand() < 0.4) ? (10000 + Math.floor(rand()*400000)) : '');
       set('tr_date', d(rand, '2026-08-01', 40));
       $('tradeSubmitBtn').click();
     },
@@ -286,7 +327,16 @@
       tab('portfolio');
       var btns = document.querySelectorAll('.trade-edit');
       if (!btns.length) return 'skip';
-      var ans = [String(1+Math.floor(rand()*20)), (20+rand()*300).toFixed(2), d(rand,'2026-08-01',40), rand()<0.35?'매도':'매수'], ai=0;
+      // 묻는 순서: 수량 · 가격 · 낸 원화 · 날짜 · 구분.
+      // 원화를 붙였다 뗐다 하며 짝 입금 줄이 따라오는지도 같이 흔든다.
+      var isSell = rand() < 0.35;
+      var ans = [
+        String(1+Math.floor(rand()*20)),
+        (20+rand()*300).toFixed(2),
+        (!isSell && rand() < 0.4) ? String(10000 + Math.floor(rand()*400000)) : '',
+        d(rand,'2026-08-01',40),
+        isSell ? '매도' : '매수'
+      ], ai=0;
       window.prompt = function(){ return ans[ai++]; };
       btns[Math.floor(rand()*btns.length)].click();
     },
