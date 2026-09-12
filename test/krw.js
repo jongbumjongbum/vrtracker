@@ -96,6 +96,29 @@
     try { btn.click(); } finally { window.confirm = real; }
   }
 
+  // 종목 표에서 한 줄의 칸 값을 라벨로 읽는다. 화면에 실제로 찍힌 숫자를
+  // 보는 것이라, 계산 함수가 맞아도 표에 안 붙었으면 잡힌다.
+  function cellText(hId, label){
+    tab('portfolio');
+    var tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+    if (!tr) throw new Error('종목 줄을 못 찾음');
+    var td = tr.querySelector('td[data-label="' + label + '"]');
+    if (!td) throw new Error('"' + label + '" 칸을 못 찾음');
+    return td.textContent.trim();
+  }
+  // 시세가 안 잡히는 티커는 표에 현재가 직접입력 칸이 뜬다. 그 칸으로 넣는다.
+  // 앱은 state 를 메모리에 들고 있어서 localStorage 를 고쳐도 화면은 안 바뀐다 —
+  // 무엇이든 UI 로 넣어야 한다.
+  function setCurrentPrice(hId, price){
+    tab('portfolio');
+    var tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+    if (!tr) throw new Error('종목 줄을 못 찾음');
+    var inp = tr.querySelector('.h-price');
+    if (!inp) throw new Error('현재가 칸이 없음 (실시간 시세가 잡히는 티커예요)');
+    inp.value = price;
+    inp.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+
   var CASES = {};
 
   // 원화 칸을 채운 매수는 예수금을 건드리지 않는다. 매수로 빠진 만큼
@@ -181,6 +204,41 @@
     if (!near(cash() - before, 0)) bad.push('거래를 지웠는데 예수금이 제자리로 안 옴: ' + (cash() - before));
     if (holding(hId).trades.length !== 0) bad.push('거래가 안 지워짐');
     if (linkedRows(tradeId).length !== 0) bad.push('짝 입금 줄이 남아 있음');
+  };
+
+  // 원화 매수 두 건의 원화 원가는 낸 원화의 합이다. 손익은 그 원가와
+  // (수량 x 현재가 x 환율) 의 차이다.
+  CASES.krwBasisAndPnl = function(bad){
+    if (!requireFx(bad)) return;
+    var hId = addHolding('EEE');
+    recordTrade(hId, 'buy', 2, 100, 260000, '2026-09-01');
+    // 매수를 기록하면 그 가격이 현재가로도 들어간다 (h.currentPrice = price).
+    // 'EEE' 는 가짜 서버의 시세 목록에 없어 실시간 값이 덮지 않는다.
+    recordTrade(hId, 'buy', 2, 110, 300000, '2026-09-02');
+    var cost = cellText(hId, '원화 원가');
+    if (cost.indexOf('560,000') === -1) bad.push('원화 원가가 560,000 이 아님: ' + cost);
+    // 4주 x $110 x 1385.5 = 609,620 -> 손익 +49,620
+    var pnl = cellText(hId, '원화 손익');
+    if (pnl.indexOf('49,620') === -1) bad.push('원화 손익이 49,620 이 아님: ' + pnl);
+  };
+
+  // 원화를 안 적은 종목은 원화 칸이 비어 있어야 한다 — 0원이 아니라 "–".
+  CASES.noKrwShowsDash = function(bad){
+    var hId = addHolding('FFF');
+    recordTrade(hId, 'buy', 2, 100, null, '2026-09-01');
+    var cost = cellText(hId, '원화 원가');
+    if (cost !== '–') bad.push('원화를 안 적었는데 원가 칸이 "–" 가 아님: ' + cost);
+  };
+
+  // 절반만 원화로 샀으면 원화 손익은 그 절반에 대해서만 계산하고
+  // 나머지가 빠져 있다고 알려야 한다.
+  CASES.partialKrwWarns = function(bad){
+    if (!requireFx(bad)) return;
+    var hId = addHolding('GGG');
+    recordTrade(hId, 'buy', 2, 100, 260000, '2026-09-01');
+    recordTrade(hId, 'buy', 2, 100, null, '2026-09-02');
+    var pnl = cellText(hId, '원화 손익');
+    if (pnl.indexOf('미입력분 제외') === -1) bad.push('일부만 원화인데 안내가 없음: ' + pnl);
   };
 
   window.__krwTest = function(only){

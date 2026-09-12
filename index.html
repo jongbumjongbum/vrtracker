@@ -1898,6 +1898,36 @@
     });
     return { qty: qty, avgCost: avg, realizedPL: realized };
   }
+  // 원화 금액은 보기 통화와 상관없이 언제나 원으로 적는다. 실제로 낸 돈이라
+  // 달러로 환산해 보여주면 그 숫자가 다시 오늘 환율에 흔들린다.
+  function fmtKrw0(n){
+    if (n == null || isNaN(n)) return "–";
+    return (n < 0 ? "-" : "") + "₩" + Math.round(Math.abs(n)).toLocaleString("ko-KR");
+  }
+  // 원화로 산 물량의 원가를 따로 센다. replayManualHolding 과 같은 순서로
+  // 거래를 훑되, 낸 원화가 적힌 매수만 원가에 넣는다. 매도는 평균단가 방식과
+  // 똑같이 비례로 덜어낸다 — 그래야 달러 원가와 원화 원가가 어긋나지 않는다.
+  // krwQty 가 전체 수량보다 작으면 원화를 안 적은 물량이 섞여 있다는 뜻이라,
+  // 화면에서 "미입력분 제외"라고 알려준다.
+  function computeKrwBasis(h){
+    var seed = manualHoldingSeed(h);
+    var qty = seed.qty;
+    var krwQty = h.krwSeedQty || 0;
+    var krwCost = h.krwSeedCost || 0;
+    (h.trades || []).forEach(function(t){
+      if (t.type === "buy"){
+        qty += t.qty;
+        if (t.krwAmount > 0){ krwQty += t.qty; krwCost += t.krwAmount; }
+      } else {
+        var sq = Math.min(t.qty, qty);
+        var f = qty > 0 ? sq / qty : 0;
+        krwQty = krwQty * (1 - f);
+        krwCost = krwCost * (1 - f);
+        qty -= sq;
+      }
+    });
+    return { krwQty: krwQty, krwCost: krwCost };
+  }
   // Replays h.trades from `seed`, rewriting h and returning the net cash effect
   // of the whole trade list (negative = money spent).
   function replayManualHolding(h, seed){
@@ -5128,11 +5158,34 @@
         : ('<input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-price" value="' + h.currentPrice + '" placeholder="시세 못 가져옴, 직접입력" />');
       var realizedPL = h.realizedPL || 0;
       var realizedCls = realizedPL > 0 ? "var(--buy)" : (realizedPL < 0 ? "var(--sell)" : "var(--ink-soft)");
+      var kb = computeKrwBasis(h);
+      var fxRate = (state.fx && state.fx.usdkrw) ? state.fx.usdkrw : null;
+      var hasKrw = kb.krwCost > 0;
+      var krwCostCell = hasKrw ? fmtKrw0(kb.krwCost) : '<span class="footnote">–</span>';
+      var krwPnlCell = '<span class="footnote">–</span>';
+      var krwPnlCls = "var(--ink-soft)";
+      if (hasKrw && fxRate == null){
+        krwPnlCell = '<span class="footnote">환율 필요</span>';
+      } else if (hasKrw){
+        var krwValue = kb.krwQty * effPrice * fxRate;
+        var krwProfit = krwValue - kb.krwCost;
+        var krwPct = (krwProfit / kb.krwCost) * 100;
+        krwPnlCls = krwProfit > 0 ? "var(--buy)" : (krwProfit < 0 ? "var(--sell)" : "var(--ink-soft)");
+        krwPnlCell = (krwProfit > 0 ? "+" : "") + fmtKrw0(krwProfit) +
+          ' <span class="footnote" style="display:inline;">' + fmtPct(krwPct, 1) + '</span>' +
+          // 원화를 안 적은 물량이 섞여 있으면 이 손익은 일부만 센 것이다.
+          (kb.krwQty < (h.qty || 0) - 1e-6
+            ? ' <span class="footnote" style="display:inline;">원화 원가 미입력분 제외</span>'
+            : '');
+      }
       var hKey = "hold:" + h.id;
       var headSub = (h.qty||0) + '주 · ' + fmtCurrency(value) +
         (profitPct == null ? '' : (' · ' + (profit>0?'+':'') + fmtPct(profitPct,1)));
       return '<tr data-id="' + h.id + '" class="' + rowOpenClass(hKey).replace(/^ /,"") + '">' +
-        rowHeadCell(hKey, escapeHtml(h.ticker || "새 종목"), headSub) +
+        rowHeadCell(hKey,
+          escapeHtml(h.ticker || "새 종목") +
+            (hasKrw ? ' <span class="footnote" style="display:inline;">₩적립</span>' : ''),
+          headSub) +
         '<td data-label="티커"><input type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" class="cell-input ticker h-ticker" value="' + escapeHtml(h.ticker) + '" placeholder="예: AAPL" /></td>' +
         '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-qty" value="' + h.qty + '" /></td>' +
         '<td class="num" data-label="매입평균가"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input h-cost" value="' + h.avgCost + '" /></td>' +
@@ -5141,12 +5194,15 @@
         '<td class="num" data-label="미실현 수익금" style="color:' + profitCls + '">' + fmtCurrency(profit) + '</td>' +
         '<td class="num" data-label="미실현 수익률" style="color:' + profitCls + '">' + (profitPct==null?"–":fmtPct(profitPct,1)) + '</td>' +
         '<td class="num" data-label="실현손익" style="color:' + realizedCls + '">' + fmtCurrency(realizedPL) + '</td>' +
+        '<td class="num" data-label="원화 원가">' + krwCostCell + '</td>' +
+        '<td class="num" data-label="원화 손익" style="color:' + krwPnlCls + '">' + krwPnlCell + '</td>' +
         '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     host.innerHTML = '<div class="table-wrap"><table class="stack-mobile collapsible-rows"><thead><tr>' +
       '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
-      '<th class="num">평가금</th><th class="num">미실현 수익금</th><th class="num">미실현 수익률</th><th class="num">실현손익</th><th></th>' +
+      '<th class="num">평가금</th><th class="num">미실현 수익금</th><th class="num">미실현 수익률</th><th class="num">실현손익</th>' +
+      '<th class="num">원화 원가</th><th class="num">원화 손익</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 
     Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
