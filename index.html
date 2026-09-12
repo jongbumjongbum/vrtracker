@@ -4041,7 +4041,10 @@
       '<div class="card-desc">여기서 매수·매도를 기록하면 수량·매입평균가·실현손익이 자동 계산되고, 매수한 금액은 "VR 외 예수금"에서 빠지고 매도한 금액은 더해져요.<br>' +
       '<b>원화 주식모으기로 샀으면 [낸 원화]에 실제 결제된 원화를 적어주세요.</b> 밖에서 새로 넣은 돈이라 예수금은 그대로 두고, 원화 기준 손익을 따로 계산해요.</div>' +
       (tradeableHoldings.length
-        ? ('<div class="form-grid" style="grid-template-columns:repeat(6,1fr);align-items:end;">' +
+        // 칸이 여섯이라 좁은 화면에서는 한 줄에 다 안 들어간다. 개수를 못 박는
+        // 대신 들어갈 만큼만 채우고 나머지는 아랫줄로 넘긴다 — 안 그러면
+        // 마지막 [날짜] 칸이 카드 밖으로 밀려 나가 보이지 않는다.
+        ? ('<div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end;">' +
             field("종목", '<select id="tr_ticker">' + tickerOptions + '</select>') +
             field("구분", '<select id="tr_type"><option value="buy">매수</option><option value="sell">매도</option></select>') +
             field("수량", '<input id="tr_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 10" />') +
