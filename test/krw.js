@@ -119,6 +119,38 @@
     inp.dispatchEvent(new Event('change', {bubbles:true}));
   }
 
+  function setSeedKrw(hId, value){
+    tab('portfolio');
+    var tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+    if (!tr) throw new Error('종목 줄을 못 찾음');
+    var inp = tr.querySelector('.h-krwseed');
+    if (!inp) throw new Error('기존분 원화원가 칸을 못 찾음');
+    var real = window.alert;
+    window.alert = function(){};
+    inp.value = value;
+    try { inp.dispatchEvent(new Event('change', {bubbles:true})); }
+    finally { window.alert = real; }
+  }
+  // 거래 기록 없이 수량·평단만 직접 넣는다 — 지금 QLD 가 그런 상태다.
+  // 수량 직접 수정은 "예수금에 반영되지 않아요" confirm 을 띄우므로 확인을 눌러준다.
+  function seedPosition(hId, qty, avgCost){
+    tab('portfolio');
+    var tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+    if (!tr) throw new Error('종목 줄을 못 찾음');
+    var real = window.confirm;
+    window.confirm = function(){ return true; };
+    try {
+      var q = tr.querySelector('.h-qty');
+      q.value = qty;
+      q.dispatchEvent(new Event('change', {bubbles:true}));
+    } finally { window.confirm = real; }
+    // 수량을 고치면 표가 다시 그려져 앞서 잡아둔 tr 은 버려진 줄이다. 다시 찾는다.
+    tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+    var c = tr.querySelector('.h-cost');
+    c.value = avgCost;
+    c.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+
   var CASES = {};
 
   // 원화 칸을 채운 매수는 예수금을 건드리지 않는다. 매수로 빠진 만큼
@@ -239,6 +271,43 @@
     recordTrade(hId, 'buy', 2, 100, null, '2026-09-02');
     var pnl = cellText(hId, '원화 손익');
     if (pnl.indexOf('미입력분 제외') === -1) bad.push('일부만 원화인데 안내가 없음: ' + pnl);
+  };
+
+  // 거래 기록 없이 쌓아둔 기존 물량에 원화 원가를 적으면 그 물량까지
+  // 원화 손익에 들어온다.
+  CASES.seedKrwCost = function(bad){
+    var hId = addHolding('HHH');
+    seedPosition(hId, 10, 90);
+    setSeedKrw(hId, 1170000);
+    var h = holding(hId);
+    if (h.krwSeedCost !== 1170000) bad.push('krwSeedCost 가 안 들어감: ' + h.krwSeedCost);
+    if (h.krwSeedQty !== 10) bad.push('krwSeedQty 가 10 이 아님: ' + h.krwSeedQty);
+    if (!requireFx(bad)) return;
+    setCurrentPrice(hId, 100);
+    // 10주 x $100 x 1385.5 = 1,385,500 -> 손익 +215,500
+    var pnl = cellText(hId, '원화 손익');
+    if (pnl.indexOf('215,500') === -1) bad.push('기존분 원화 손익이 215,500 이 아님: ' + pnl);
+  };
+
+  // 기존 물량이 없는데 기존분 원가를 적으면 원가만 생기고 수량이 없어
+  // 손익이 통째로 마이너스가 된다. 받지 않아야 한다.
+  CASES.seedKrwRejectedWhenNoPosition = function(bad){
+    var hId = addHolding('III');
+    recordTrade(hId, 'buy', 2, 100, 260000, '2026-09-01');
+    setSeedKrw(hId, 500000);
+    var h = holding(hId);
+    if (h.krwSeedCost != null) bad.push('기존 물량이 없는데 krwSeedCost 가 들어감: ' + h.krwSeedCost);
+  };
+
+  // 값을 비우면 기존분 원가가 지워진다.
+  CASES.seedKrwCleared = function(bad){
+    var hId = addHolding('JJJ');
+    seedPosition(hId, 10, 90);
+    setSeedKrw(hId, 1170000);
+    setSeedKrw(hId, '');
+    var h = holding(hId);
+    if (h.krwSeedCost != null) bad.push('krwSeedCost 가 안 지워짐: ' + h.krwSeedCost);
+    if (h.krwSeedQty != null) bad.push('krwSeedQty 가 안 지워짐: ' + h.krwSeedQty);
   };
 
   window.__krwTest = function(only){

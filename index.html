@@ -4031,7 +4031,8 @@
     manCard.innerHTML = "<h3>직접 추가한 종목 (그외에 포함)</h3>" +
       '<div class="card-desc">VR·무매로 운용하지 않는 다른 주식을 여기에 추가하세요. 현재가는 실시간 시세를 자동으로 가져오고, 못 가져온 티커만 직접 입력할 수 있어요.<br>' +
         '<b>실제로 사고판 건 아래 "매수/매도 기록 추가"로 넣어주세요.</b> 표의 수량·평단을 직접 고치면 예수금과 실현손익에는 반영되지 않아요 (입력 실수 정정용이에요).<br>' +
-        '표의 <b>실현손익 칸은 아래 매수/매도 기록으로 확정된 것만</b> 보여줘요 — 손익 탭에 직접 적은 "이 앱 쓰기 전 실현손익"은 여기 안 들어가요. 전체 실현손익은 <b>손익 탭</b>에서 기간을 "전체"로 놓고 보세요.</div>' +
+        '표의 <b>실현손익 칸은 아래 매수/매도 기록으로 확정된 것만</b> 보여줘요 — 손익 탭에 직접 적은 "이 앱 쓰기 전 실현손익"은 여기 안 들어가요. 전체 실현손익은 <b>손익 탭</b>에서 기간을 "전체"로 놓고 보세요.<br>' +
+        '<b>기존분 원화원가</b>는 이 앱에 매수 기록을 넣기 전부터 갖고 있던 물량에 들어간 원화 총액이에요 (증권사 앱의 총 매수금액). 적으면 그 물량까지 원화 손익에 들어와요. 모르면 비워두세요 — 앞으로 기록하는 매수분만 계산해요.</div>' +
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>' +
       '<h3 style="margin-top:20px;font-size:14px;">매수/매도 기록 추가</h3>' +
@@ -5196,13 +5197,14 @@
         '<td class="num" data-label="실현손익" style="color:' + realizedCls + '">' + fmtCurrency(realizedPL) + '</td>' +
         '<td class="num" data-label="원화 원가">' + krwCostCell + '</td>' +
         '<td class="num" data-label="원화 손익" style="color:' + krwPnlCls + '">' + krwPnlCell + '</td>' +
+        '<td class="num" data-label="기존분 원화원가"><input type="number" autocomplete="off" inputmode="numeric" step="1" min="0" class="cell-input h-krwseed" value="' + (h.krwSeedCost || "") + '" placeholder="모르면 비워두기" /></td>' +
         '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
         '</tr>';
     }).join("");
     host.innerHTML = '<div class="table-wrap"><table class="stack-mobile collapsible-rows"><thead><tr>' +
       '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
       '<th class="num">평가금</th><th class="num">미실현 수익금</th><th class="num">미실현 수익률</th><th class="num">실현손익</th>' +
-      '<th class="num">원화 원가</th><th class="num">원화 손익</th><th></th>' +
+      '<th class="num">원화 원가</th><th class="num">원화 손익</th><th class="num">기존분 원화원가</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 
     Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
@@ -5228,6 +5230,27 @@
         commit();
       });
       tr.querySelector(".h-cost").addEventListener("change", function(){ h.avgCost = parseFloat(this.value)||0; commit(); });
+      // 이 앱에 매수 기록을 넣기 전부터 갖고 있던 물량에 들어간 원화.
+      // 대응 수량은 사용자가 따로 적지 않고, 거래 기록을 되감은 출발 수량을
+      // 그대로 쓴다 — 그 수량이 곧 "기록 없이 쌓여 있던 물량"이다.
+      tr.querySelector(".h-krwseed").addEventListener("change", function(){
+        var v = parseFloat(this.value);
+        if (isNaN(v) || v <= 0){
+          delete h.krwSeedCost; delete h.krwSeedQty;
+          commit();
+          return;
+        }
+        var seedQty = manualHoldingSeed(h).qty;
+        if (seedQty <= 0){
+          alert("이 종목은 매수 기록만으로 쌓인 물량이라 따로 적을 기존분이 없어요.\n\n" +
+            "각 매수 기록의 [낸 원화]에 적어주세요.");
+          this.value = "";
+          return;
+        }
+        h.krwSeedCost = v;
+        h.krwSeedQty = seedQty;
+        commit();
+      });
       var priceInput = tr.querySelector(".h-price");
       if (priceInput){
         priceInput.addEventListener("change", function(){ h.currentPrice = parseFloat(this.value)||0; commit(); });
