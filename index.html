@@ -3800,7 +3800,9 @@
     });
     var allCashRows = state.portfolio.cashLog
       .filter(function(e){ return e.kind === "입금" || e.kind === "출금" || e.kind === "배당금"; })
-      .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: true }; })
+      // 거래에 딸려 자동으로 생긴 입금 줄은 여기서 지우면 예수금이 어긋난다.
+      // 거래를 지우거나 고치면 알아서 따라가므로 "자동"으로만 보여준다.
+      .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: !e.tradeId }; })
       .concat(derivedCashRows)
       .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     var cashLogRows = allCashRows.slice().reverse().map(function(e){
@@ -4040,6 +4042,8 @@
           var i = trades.findIndex(function(x){ return x.id === f.t.id; });
           if (i !== -1) trades.splice(i, 1);
         });
+        // 거래가 사라졌으니 거기 딸린 자동 입금 줄도 같이 사라져야 한다.
+        syncKrwDeposit(f.t.id, null);
         saveState();
         renderMain();
       });
@@ -4052,21 +4056,34 @@
         if (qs === null) return;
         var ps = prompt("가격 ($)", String(f.t.price));
         if (ps === null) return;
+        var ks = prompt("낸 원화 (₩) — 원화로 산 게 아니면 비워두세요", f.t.krwAmount != null ? String(f.t.krwAmount) : "");
+        if (ks === null) return;
         var ds = prompt("날짜 (YYYY-MM-DD)", f.t.date);
         if (ds === null) return;
         var ts = prompt('구분: "매수" 또는 "매도"', f.t.type === "buy" ? "매수" : "매도");
         if (ts === null) return;
         var nq = parseFloat(qs), np = parseFloat(ps);
         var nt = (ts.trim() === "매도" || ts.trim().toLowerCase() === "sell") ? "sell" : "buy";
+        var nk = ks.trim() === "" ? null : parseFloat(ks);
         if (isNaN(nq) || nq <= 0 || isNaN(np) || np <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(ds.trim())){
           alert("수량·가격은 0보다 큰 숫자, 날짜는 YYYY-MM-DD 형식이어야 해요.");
+          return;
+        }
+        if (nk !== null && (isNaN(nk) || nk <= 0)){
+          alert("낸 원화는 0보다 큰 숫자여야 해요. 원화로 산 게 아니면 비워두세요.");
           return;
         }
         mutateManualTrades(f.h, function(trades){
           var t = trades.find(function(x){ return x.id === f.t.id; });
           t.qty = nq; t.price = np; t.date = ds.trim(); t.type = nt;
+          // 매도로 바꾸면 원화 금액은 의미가 없어진다.
+          if (nt === "buy" && nk !== null) t.krwAmount = nk;
+          else delete t.krwAmount;
           trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
         });
+        // 예수금이 새 매수액으로 갱신된 뒤라야 상쇄 금액이 맞는다.
+        var updated = (f.h.trades || []).find(function(x){ return x.id === f.t.id; });
+        syncKrwDeposit(f.t.id, updated);
         saveState();
         renderMain();
       });
