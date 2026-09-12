@@ -101,7 +101,11 @@
       }
       // 원화 원가 — index.html 의 computeKrwBasis 와 같은 규칙을 따로 적는다.
       // 한쪽만 고치면 여기서 어긋나므로 규칙이 조용히 갈라지지 않는다.
-      var kq = h.krwSeedQty || 0, kc = h.krwSeedCost || 0, q2 = 0;
+      // 거래 기록 없이 수량만 직접 고쳐 쌓아둔 물량(= 출발 수량)도 세야 한다.
+      // 앱의 manualHoldingSeed 가 하는 일을 여기서는 뺄셈으로 구한다:
+      // 지금 수량에서 거래로 만들어진 수량을 빼면 그게 출발 수량이다.
+      // 이걸 빼먹으면 원화 기록수량이 전체 수량을 넘었다고 헛경보가 난다.
+      var kq = h.krwSeedQty || 0, kc = h.krwSeedCost || 0, q2 = (h.qty || 0) - qty;
       (h.trades||[]).forEach(function(t){
         if (t.type === 'buy'){
           q2 += t.qty;
