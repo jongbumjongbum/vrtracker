@@ -1834,7 +1834,9 @@
     var log = state.portfolio.cashLog;
     var i = -1;
     for (var k = 0; k < log.length; k++){ if (log[k].tradeId === tradeId){ i = k; break; } }
-    var want = (t && t.type === "buy" && t.krwAmount > 0) ? round4(t.qty * t.price) : 0;
+    // replayManualHolding 이 매수로 빼는 금액은 round2 로 정리된 값이다.
+    // 여기서 round4 를 쓰면 상쇄가 1원 미만씩 어긋나 예수금이 야금야금 흐른다.
+    var want = (t && t.type === "buy" && t.krwAmount > 0) ? round2(t.qty * t.price) : 0;
     var had = i !== -1 ? log[i].amount : 0;
     state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + want - had);
     if (!want){
