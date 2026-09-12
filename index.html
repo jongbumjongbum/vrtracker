@@ -1823,6 +1823,32 @@
     state.portfolio.cashLog.push({ id: uid(), date: date, kind: kind, amount: amount, note: note || "" });
     state.portfolio.cashLog.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
   }
+  // 원화로 산 매수는 달러 예수금이 아니라 밖에서 들어온 원화로 결제된다.
+  // 그런데 mutateManualTrades 는 매수액만큼 예수금을 깎으므로, 같은 금액의
+  // 입금 줄을 붙여 되돌려 놓는다 (순효과 0). 가짜 보정이 아니라 진짜 입금
+  // 줄이라 "예수금 = 입출금 + 매매 누적" 불변식도 그대로 성립한다.
+  // 입금액은 원화가 아니라 달러(qty*price)다 — 매수가 뺀 것과 같은 단위라야
+  // 정확히 0 이 된다. 원화 금액은 사람이 읽는 메모로만 남는다.
+  // t 가 null 이거나 원화 매수가 아니면 짝 줄을 없앤다.
+  function syncKrwDeposit(tradeId, t){
+    var log = state.portfolio.cashLog;
+    var i = -1;
+    for (var k = 0; k < log.length; k++){ if (log[k].tradeId === tradeId){ i = k; break; } }
+    var want = (t && t.type === "buy" && t.krwAmount > 0) ? round4(t.qty * t.price) : 0;
+    var had = i !== -1 ? log[i].amount : 0;
+    state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + want - had);
+    if (!want){
+      if (i !== -1) log.splice(i, 1);
+      return;
+    }
+    var note = "원화 적립 ₩" + Math.round(t.krwAmount).toLocaleString("ko-KR");
+    if (i !== -1){
+      log[i].amount = want; log[i].date = t.date; log[i].note = note;
+    } else {
+      log.push({ id: uid(), date: t.date, kind: "입금", amount: want, note: note, tradeId: tradeId });
+    }
+    log.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+  }
 
   // VR로 들어온 배당금을 그 VR의 Pool에 반영한다. 체결도 적립도 없는 "배당만
   // 있는" 사이클 하나를 이어붙이는 방식이라 — 가격은 마지막 사이클(또는 초기값)
@@ -3977,13 +4003,15 @@
       '<div id="manualHoldingsHost"></div>' +
       '<div class="form-actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn btn-sm" id="addHoldingBtn" type="button">+ 종목 추가</button></div>' +
       '<h3 style="margin-top:20px;font-size:14px;">매수/매도 기록 추가</h3>' +
-      '<div class="card-desc">여기서 매수·매도를 기록하면 수량·매입평균가·실현손익이 자동 계산되고, 매수한 금액은 "VR 외 예수금"에서 빠지고 매도한 금액은 더해져요.</div>' +
+      '<div class="card-desc">여기서 매수·매도를 기록하면 수량·매입평균가·실현손익이 자동 계산되고, 매수한 금액은 "VR 외 예수금"에서 빠지고 매도한 금액은 더해져요.<br>' +
+      '<b>원화 주식모으기로 샀으면 [낸 원화]에 실제 결제된 원화를 적어주세요.</b> 밖에서 새로 넣은 돈이라 예수금은 그대로 두고, 원화 기준 손익을 따로 계산해요.</div>' +
       (tradeableHoldings.length
-        ? ('<div class="form-grid" style="grid-template-columns:repeat(5,1fr);align-items:end;">' +
+        ? ('<div class="form-grid" style="grid-template-columns:repeat(6,1fr);align-items:end;">' +
             field("종목", '<select id="tr_ticker">' + tickerOptions + '</select>') +
             field("구분", '<select id="tr_type"><option value="buy">매수</option><option value="sell">매도</option></select>') +
             field("수량", '<input id="tr_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 10" />') +
             field("가격 ($)", '<input id="tr_price" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 230.5" />') +
+            field("낸 원화 (₩)", '<input id="tr_krw" type="number" autocomplete="off" inputmode="numeric" step="1" min="0" placeholder="원화로 샀을 때만" />') +
             field("날짜", '<input id="tr_date" type="date" autocomplete="off" value="' + todayStr() + '" />') +
           '</div>' +
           '<div class="form-actions"><button class="btn btn-primary" id="tradeSubmitBtn" type="button">기록하기</button></div>')
@@ -4051,16 +4079,27 @@
         var qty = parseFloat(document.getElementById("tr_qty").value);
         var price = parseFloat(document.getElementById("tr_price").value);
         var date = document.getElementById("tr_date").value || todayStr();
+        var krwRaw = document.getElementById("tr_krw").value;
+        var krw = krwRaw === "" ? null : parseFloat(krwRaw);
         if (isNaN(qty) || qty <= 0 || isNaN(price) || price <= 0){ alert("수량과 가격을 입력해주세요."); return; }
+        if (krw !== null && (isNaN(krw) || krw <= 0)){
+          alert("낸 원화는 0보다 큰 숫자여야 해요. 원화로 산 게 아니면 비워두세요.");
+          return;
+        }
         var h = manual.find(function(x){ return x.id === hId; });
         if (!h) return;
         if (type === "sell" && (h.qty||0) <= 0){ alert("팔 수량이 없어요."); return; }
         var tradeId = uid();
         mutateManualTrades(h, function(trades){
-          trades.push({ id: tradeId, date: date, type: type, qty: qty, price: price });
+          var t = { id: tradeId, date: date, type: type, qty: qty, price: price };
+          // 원화 금액은 매수에만 붙인다 — 원화 기준 실현손익은 아직 다루지 않는다.
+          if (type === "buy" && krw !== null) t.krwAmount = krw;
+          trades.push(t);
           trades.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
         });
         var rec = h.trades.find(function(t){ return t.id === tradeId; });
+        // mutateManualTrades 가 예수금을 이미 움직인 뒤라야 상쇄가 맞는다.
+        syncKrwDeposit(tradeId, rec);
         h.currentPrice = price;
         // 매도는 보유수량까지만 기록된다 (replayManualHolding이 잘라낸다).
         if (type === "sell" && rec && rec.qty < qty){
@@ -4069,6 +4108,17 @@
         saveState();
         renderMain();
       });
+      // 원화 기준 실현손익은 범위 밖이라, 매도에는 원화를 받지 않는다.
+      // 칸이 열려 있으면 적어도 무시되는데, 적은 사람은 반영된 줄 안다.
+      var trTypeEl = document.getElementById("tr_type");
+      var trKrwEl = document.getElementById("tr_krw");
+      function syncKrwFieldEnabled(){
+        var isSell = trTypeEl.value === "sell";
+        trKrwEl.disabled = isSell;
+        if (isSell) trKrwEl.value = "";
+      }
+      trTypeEl.addEventListener("change", syncKrwFieldEnabled);
+      syncKrwFieldEnabled();
     }
 
     Array.prototype.forEach.call(document.querySelectorAll("#curToggle button"), function(btn){
