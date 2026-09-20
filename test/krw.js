@@ -310,6 +310,39 @@
     if (h.krwSeedQty != null) bad.push('krwSeedQty 가 안 지워짐: ' + h.krwSeedQty);
   };
 
+  // 2026-08-18 이전 판본이 cashLog 에 직접 넣어둔 매수·매도 줄. 필터에 걸려
+  // 화면에서 통째로 사라져 있었다 — 다시 보여야 하고, 지워도 예수금은
+  // 그대로여야 한다 (애초에 예수금에 더해진 적이 없다).
+  // 앱이 상태를 메모리에 들고 있어 심은 줄을 읽히려면 새로고침이 필요하다.
+  // 그래서 __krwTest 와 달리 두 번에 나눠 돈다:
+  //   __krwLegacySeed()  → 새로고침됨 → krw.js 다시 붙이고 → __krwLegacyCheck()
+  window.__krwLegacySeed = function(){
+    var s = st();
+    s.portfolio.extraCash = 1000;
+    s.portfolio.cashLog.push({
+      id: 'legacy-1', date: '2026-08-17', kind: '매도',
+      amount: 7282.56, note: 'SOXL 48주 매도 (실현손익 $794.0784)'
+    });
+    localStorage.setItem(KEY, JSON.stringify(s));
+    location.reload();
+  };
+  window.__krwLegacyCheck = function(){
+    var bad = [];
+    tab('portfolio');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#mainArea table tr'));
+    var hit = rows.filter(function(tr){ return tr.textContent.indexOf('SOXL 48주 매도') !== -1; });
+    if (!hit.length){ bad.push('옛 매도 줄이 화면에 안 보임'); return bad; }
+    if (hit[0].textContent.indexOf('옛 기록') === -1) bad.push('"옛 기록" 표시가 없음');
+    var del = hit[0].querySelector('.cash-del-legacy');
+    if (!del){ bad.push('옛 줄 전용 삭제 버튼이 없음'); return bad; }
+    var before = cash();
+    var rc = window.confirm; window.confirm = function(){ return true; };
+    try { del.click(); } finally { window.confirm = rc; }
+    if (!near(cash(), before)) bad.push('옛 줄을 지웠는데 예수금이 움직임: ' + before + ' -> ' + cash());
+    if ((st().portfolio.cashLog||[]).some(function(e){ return e.id === 'legacy-1'; })) bad.push('옛 줄이 안 지워짐');
+    return bad;
+  };
+
   window.__krwTest = function(only){
     var bad = [];
     Object.keys(CASES).forEach(function(name){

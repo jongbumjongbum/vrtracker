@@ -3873,21 +3873,43 @@
         });
       });
     });
+    // 2026-08-18(cf7545e) 전 판본은 매수·매도 줄을 cashLog 에 직접 저장했다.
+    // 그 뒤로 매매 줄은 h.trades 에서 만들어 그리게 바뀌었는데, 이미 저장돼
+    // 있던 줄은 옮기지도 지우지도 않았다. 아래 필터가 통과시키지 않아서
+    // 화면에서 통째로 사라진 채 데이터에만 남아 있었다 — 판 기록이 안 보인다.
+    // 다시 보여준다. 예수금 합계에는 예나 지금이나 안 들어가 있으므로
+    // (그래서 지울 때도 예수금을 건드리면 안 된다) legacy 로 따로 표시한다.
+    // 같은 매도가 새 방식으로도 남아 있으면 두 번 보이니 그건 뺀다.
+    var liveTradeIds = {};
+    state.portfolio.holdings.forEach(function(h){
+      (h.trades||[]).forEach(function(t){ liveTradeIds[t.id] = true; });
+    });
+    var legacyTradeRows = state.portfolio.cashLog
+      .filter(function(e){
+        return (e.kind === "매수" || e.kind === "매도") && !(e.tradeId && liveTradeIds[e.tradeId]);
+      })
+      .map(function(e){
+        return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, legacy: true };
+      });
     var allCashRows = state.portfolio.cashLog
       .filter(function(e){ return e.kind === "입금" || e.kind === "출금" || e.kind === "배당금"; })
       // 거래에 딸려 자동으로 생긴 입금 줄은 여기서 지우면 예수금이 어긋난다.
       // 거래를 지우거나 고치면 알아서 따라가므로 "자동"으로만 보여준다.
       .map(function(e){ return { id: e.id, date: e.date, kind: e.kind, amount: e.amount, note: e.note, canDelete: !e.tradeId }; })
       .concat(derivedCashRows)
+      .concat(legacyTradeRows)
       .sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
     var cashLogRows = allCashRows.slice().reverse().map(function(e){
       var color = e.amount > 0 ? "var(--buy)" : (e.amount < 0 ? "var(--sell)" : "var(--ink-soft)");
       return '<tr><td data-label="날짜">' + fmtDate(e.date) + '</td><td data-label="구분">' + escapeHtml(e.kind) + '</td>' +
         '<td class="num" data-label="금액" style="color:' + color + '">' + (e.amount>0?"+":"") + fmtCurrency(e.amount) + '</td>' +
-        '<td data-label="메모">' + escapeHtml(e.note||"") + '</td>' +
-        '<td class="col-action">' + (e.canDelete
-          ? ('<button type="button" class="btn btn-sm btn-ghost btn-danger cash-del" data-id="' + e.id + '">삭제</button>')
-          : '<span class="footnote">자동</span>') + '</td></tr>';
+        '<td data-label="메모">' + escapeHtml(e.note||"") +
+          (e.legacy ? ' <span class="footnote" style="display:inline;">옛 기록 · 예수금 미반영</span>' : '') + '</td>' +
+        '<td class="col-action">' + (e.legacy
+          ? ('<button type="button" class="btn btn-sm btn-ghost btn-danger cash-del-legacy" data-id="' + e.id + '">삭제</button>')
+          : (e.canDelete
+            ? ('<button type="button" class="btn btn-sm btn-ghost btn-danger cash-del" data-id="' + e.id + '">삭제</button>')
+            : '<span class="footnote">자동</span>')) + '</td></tr>';
     }).join("");
     // 예전 기록을 한 번에 반영했으면 얼마가 움직였는지 알려준다. 예수금이
     // 갑자기 달라진 이유를 모르면 안 되고, 두 번 빠진 거라면 되돌려야 하니까.
@@ -3958,6 +3980,20 @@
     });
     // 잘못 넣은 입금/출금은 지울 수 있어야 한다. 지우면 그 금액만큼 예수금도
     // 원래대로 되돌린다.
+    // 옛 줄은 예수금에 더해진 적이 없으니, 지울 때도 예수금을 건드리면 안 된다.
+    // 일반 [삭제]와 같은 핸들러를 쓰면 그 금액만큼 예수금이 잘못 줄어든다.
+    Array.prototype.forEach.call(cashLogCard.querySelectorAll(".cash-del-legacy"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.getAttribute("data-id");
+        var e = state.portfolio.cashLog.find(function(x){ return x.id === id; });
+        if (!e) return;
+        if (!confirm(fmtDate(e.date) + " " + e.kind + " " + fmtCurrency(Math.abs(e.amount)) + "\n" + (e.note||"") +
+          "\n\n이 줄을 지울까요?\n예전 판본이 남긴 기록이라 예수금에는 들어가 있지 않아요 — 지워도 예수금은 그대로예요.")) return;
+        state.portfolio.cashLog = state.portfolio.cashLog.filter(function(x){ return x.id !== id; });
+        saveState();
+        renderMain();
+      });
+    });
     Array.prototype.forEach.call(cashLogCard.querySelectorAll(".cash-del"), function(btn){
       btn.addEventListener("click", function(){
         var id = btn.getAttribute("data-id");

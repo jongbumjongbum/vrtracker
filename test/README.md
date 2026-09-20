@@ -68,6 +68,15 @@ var s=document.createElement('script'); s.src='krw.js'; document.body.appendChil
 케이스들은 같은 상태 위에서 이어서 돈다. 그래서 예수금은 절대값이 아니라
 **그 케이스가 만든 변화량**으로 본다.
 
+옛 판본이 `cashLog` 에 직접 넣어둔 매수·매도 줄(2026-08-18 이전)은 새로고침을
+거쳐야 읽히므로 따로 돈다:
+
+```js
+__krwLegacySeed()
+```
+
+새로고침되면 `krw.js` 를 다시 붙이고 `__krwLegacyCheck()`. 빈 배열이면 통과다.
+
 `krw.js` 를 돌린 상태에서 곧바로 `fuzz.js` 를 돌리면 fuzz 의
 "수량 != 거래 누적" 검사가 걸린다. `krw.js` 가 **거래 기록 없이 수량만 직접
 고쳐 쌓은 물량**(기존분 원화원가를 시험하려고 일부러 만든 상태)을 남기는데,
