@@ -76,20 +76,39 @@
 
   // 아직 안 온 날짜는 비워 둔다 — 오늘 종가로 채우면 평가금이 조용히 틀린다.
   CASES.futureDateStaysEmpty = function(bad){
-    set('cy_date', '2026-09-25');
+    set('cy_date', '2026-09-25');          // 금요일 — 평일이라 비어야 한다
     var v = vals();
     if (v.close !== '') bad.push('미래 날짜인데 종가가 채워짐: ' + v.close);
     if (v.spy !== '') bad.push('미래 날짜인데 SPY 가 채워짐: ' + v.spy);
   };
 
-  // 직접 적은 값은 날짜를 바꿔도 안 건드린다.
-  CASES.typedValueKept = function(bad){
-    set('cy_date', '2026-09-17');
-    set('cy_close', '88.88');
-    set('cy_date', '2026-09-21');
+  // 주말은 장이 안 서니 금요일 종가가 그 날의 정해진 값이다.
+  // (9/21 이 월요일이므로 9/19 토, 9/20 일)
+  CASES.weekendUsesFriday = function(bad){
+    set('cy_date', '2026-09-19');
     var v = vals();
-    if (v.close !== '88.88') bad.push('직접 적은 값이 덮어써짐: ' + v.close);
-    if (v.spy !== '502') bad.push('안 건드린 SPY 는 따라와야 함: ' + v.spy);
+    if (v.close !== '101') bad.push('토요일에 직전 거래일(101) 이 아님: ' + v.close);
+    set('cy_date', '2026-09-20');
+    if ($('cy_close').value !== '101') bad.push('일요일에 직전 거래일(101) 이 아님: ' + $('cy_close').value);
+  };
+
+  // 종가 칸은 손으로 못 고친다 — 정해진 값이라 적을 일이 없다.
+  CASES.closeFieldsAreReadonly = function(bad){
+    ['cy_close','cy_spy','cy_qqq'].forEach(function(id){
+      if (!$(id).readOnly) bad.push(id + ' 가 읽기 전용이 아님');
+    });
+  };
+
+  // 종가를 못 받은 날은 마감 버튼이 잠긴다 — 없는 종가로 기록하면
+  // 그 뒤 사이클의 V·밴드가 전부 틀어진다.
+  CASES.submitLockedWhenNoClose = function(bad){
+    set('cy_date', '2026-09-25');          // 평일이고 받아온 범위 밖
+    if ($('cy_close').value !== '') bad.push('종가가 없어야 하는데 채워짐: ' + $('cy_close').value);
+    if (!$('cy_submit').disabled) bad.push('종가가 없는데 마감 버튼이 안 잠김');
+    if ($('cyPriceNote').style.display === 'none') bad.push('이유 안내가 안 뜸');
+    set('cy_date', '2026-09-21');          // 다시 있는 날로
+    if ($('cy_submit').disabled) bad.push('종가가 있는데 마감 버튼이 잠긴 채임');
+    if ($('cyPriceNote').style.display !== 'none') bad.push('종가가 있는데 안내가 남아 있음');
   };
 
   window.__vrCloseTest = function(){

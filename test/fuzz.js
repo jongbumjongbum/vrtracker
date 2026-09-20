@@ -363,7 +363,25 @@
   };
   var NAMES = Object.keys(ACTIONS);
 
+  // 마감일 종가는 앱이 받아온 시세에서 나온다. fuzz 는 동기로 도는데 시세는
+  // 비동기로 오니, 심어두지 않으면 클릭하는 순간엔 늘 비어 있어 마감 버튼이
+  // 잠긴 채로 지나간다 — 사이클이 하나도 안 만들어지고 VR 검사가 헛돈다.
+  // 앱이 읽는 자리에 미리 깔아두면 렌더 때 곧바로 잡힌다.
+  function seedSeries(){
+    ['TQQQ','SOXL','SPY','QQQ'].forEach(function(sym){
+      if (localStorage.getItem('vrtracker_series_' + sym)) return;
+      var values = [], t = Date.parse('2026-01-01');
+      for (var i=0;i<400;i++){
+        var d = new Date(t + i*86400000).toISOString().slice(0,10);
+        var c = 50 + (i % 37);
+        values.push({ date: d, close: c, high: c, low: c });
+      }
+      localStorage.setItem('vrtracker_series_' + sym, JSON.stringify({ fetchedAt: Date.now(), values: values }));
+    });
+  }
+
   window.__fuzz = function(steps, seed){
+    seedSeries();
     var rand = rng(seed);
     var log = [], failures = [];
     window.confirm = function(){ return true; };

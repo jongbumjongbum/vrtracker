@@ -428,6 +428,8 @@
     border-radius: 8px; padding: 8px 10px; font-size: 13.5px;
   }
   .field input:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  /* 종가처럼 앱이 받아오는 값. 눌러도 못 고친다는 게 보이게 테두리를 점선으로. */
+  .field input[readonly] { background: transparent; border-style: dashed; color: var(--ink); cursor: default; }
   .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
   .preview-band {
@@ -2877,16 +2879,17 @@
         '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
           field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" autocomplete="off" value="' + suggestedDate(inst) + '" />') +
-          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">이번 사이클을 마감하는 종가 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 74.47" />') +
+          field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">그 날 종가를 자동으로 받아와요 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" readonly tabindex="-1" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
           field(seg.type === "인출식"
             ? '이번에 뺀 돈 ($) <span class="hint">양수로 입력, 자동으로 차감돼요. 그만큼 "그외 예수금"으로 돌아가요. 안 뺐으면 0</span>'
             : '이번에 VR로 옮긴 돈 ($) <span class="hint">적립금. 그만큼 "그외 예수금"에서 빠지고 예수금 합계는 그대로예요. 안 넣었으면 0</span>',
             '<input id="cy_deposit" type="number" autocomplete="off" inputmode="decimal" step="0.0001" value="0" />') +
-          field("SPY 종가 (선택)", '<input id="cy_spy" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
-          field("QQQ 종가 (선택)", '<input id="cy_qqq" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="비교차트용" />') +
+          field('SPY 종가 <span class="hint">비교차트용 · 자동</span>', '<input id="cy_spy" type="number" readonly tabindex="-1" />') +
+          field('QQQ 종가 <span class="hint">비교차트용 · 자동</span>', '<input id="cy_qqq" type="number" readonly tabindex="-1" />') +
         '</div>' +
+        '<div class="limit-box" id="cyPriceNote" style="margin-top:12px;display:none;"></div>' +
         '<div class="preview-band" id="cyPreview" style="display:none;"></div>' +
         '<div class="form-actions"><button class="btn btn-primary" id="cy_submit" type="button">이 사이클 마감하고 기록하기</button></div>';
       mainArea.appendChild(entryCard);
@@ -2932,7 +2935,7 @@
     // comparison chart
     var chartCard2 = document.createElement("div");
     chartCard2.className = "card";
-    chartCard2.innerHTML = '<h3>같은 원금, SPY·QQQ 적립식과 비교</h3><div class="card-desc">사이클마다 입력한 적립금과 SPY·QQQ 종가를 이용해 "같은 돈을 SPY/QQQ에 적립식으로 넣었다면"을 계산해요. 가격을 입력하지 않은 구간은 직전 값으로 이어붙여요.</div><div id="cmpChartHost"></div>';
+    chartCard2.innerHTML = '<h3>같은 원금, SPY·QQQ 적립식과 비교</h3><div class="card-desc">사이클마다 입력한 적립금과 자동으로 받아온 SPY·QQQ 종가로 "같은 돈을 SPY/QQQ에 적립식으로 넣었다면"을 계산해요. 종가가 없는 구간은 직전 값으로 이어붙여요.</div><div id="cmpChartHost"></div>';
     mainArea.appendChild(chartCard2);
     renderComparisonChart(document.getElementById("cmpChartHost"), inst);
 
@@ -3033,7 +3036,7 @@
     function renderFillsList(){
       var host = document.getElementById("fillsListHost");
       if (!pendingFills.length){
-        host.innerHTML = '<div class="chart-empty" style="padding:14px;">매매 없음 (홀드) — 아래 종가만 입력하면 돼요.</div>';
+        host.innerHTML = '<div class="chart-empty" style="padding:14px;">매매 없음 (홀드) — 그대로 마감하면 돼요.</div>';
         return;
       }
       host.innerHTML = '<div class="table-wrap"><table class="stack-mobile"><thead><tr>' +
@@ -3082,36 +3085,44 @@
         '<span>G <b>' + res.G + '</b></span>' +
         '<span>매수한도 <b>' + fmtMoney0(res.buyLimitAmt) + '</b> (' + res.poolLimitPct.toFixed(0) + '%)</span>';
     }
-    [closeEl, depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
+    [depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
 
     // 마감일 종가는 이미 받아둔 일별 시세 안에 들어 있다. 차트 탭만 꺼내 쓰고
     // 있었을 뿐이라 여기서도 같은 걸 쓴다 — 사이클은 2주에 한 번이라 조회
     // 부담도 없고, TQQQ·SOXL 은 차트가 이미 받아둬서 호출이 아예 없다.
     // 직접 고친 칸은 건드리지 않는다 (타이핑하면 data-auto 가 떨어진다).
+    // 종가는 정해진 값이라 손으로 적을 게 아니다. 칸은 읽기 전용이고 값은
+    // 여기서만 들어간다. 못 받아온 날은 비운 채로 마감 버튼을 잠근다 —
+    // 없는 종가를 아무 숫자로 채워 기록하면 그 뒤 V·밴드가 전부 틀어진다.
     var spyEl = document.getElementById("cy_spy"), qqqEl = document.getElementById("cy_qqq");
-    var autoCloseFields = [[closeEl, inst.ticker], [spyEl, "SPY"], [qqqEl, "QQQ"]]
+    var autoCloseFields = [[closeEl, inst.ticker, true], [spyEl, "SPY", false], [qqqEl, "QQQ", false]]
       .filter(function(p){ return p[0] && p[1]; });
     function autofillCloses(){
+      var missing = [];
       autoCloseFields.forEach(function(p){
-        var el = p[0], sym = String(p[1]).toUpperCase();
-        if (el.value !== "" && el.getAttribute("data-auto") !== "1") return;
+        var sym = String(p[1]).toUpperCase();
         var close = closeOnOrBefore(sym, dateEl.value);
-        if (close == null){
-          // 마감일이 아직 안 왔으면 비워 둔다. 앞서 자동으로 채워둔 값이
-          // 날짜를 미래로 바꾼 뒤에도 남아 있으면 그게 제일 위험하다.
-          if (el.getAttribute("data-auto") === "1"){ el.value = ""; el.removeAttribute("data-auto"); }
-          return;
-        }
-        el.value = close;
-        el.setAttribute("data-auto", "1");
+        p[0].value = close == null ? "" : close;
+        if (close == null && p[2]) missing.push(sym);
       });
+      var note = document.getElementById("cyPriceNote");
+      var submitBtn = document.getElementById("cy_submit");
+      if (note){
+        if (missing.length){
+          var lastDate = latestSeriesDate(inst.ticker);
+          note.style.display = "";
+          note.innerHTML = '<div class="limit-line"><b>' + escapeHtml(missing.join(", ")) +
+            ' 종가가 아직 안 나왔어요.</b> ' +
+            (lastDate ? ("받아온 마지막 거래일은 " + fmtDate(lastDate) + "이에요. ") : "시세를 아직 못 받아왔어요. ") +
+            '그 날 장이 끝나면 자동으로 채워져요 — 그때 다시 열어서 마감해주세요.</div>';
+        } else {
+          note.style.display = "none";
+        }
+      }
+      if (submitBtn) submitBtn.disabled = missing.length > 0;
       updatePreview();
     }
-    autoCloseFields.forEach(function(p){
-      var el = p[0];
-      el.addEventListener("input", function(){ el.removeAttribute("data-auto"); });
-      ensureSeries(String(p[1]).toUpperCase(), true, autofillCloses);
-    });
+    autoCloseFields.forEach(function(p){ ensureSeries(String(p[1]).toUpperCase(), true, autofillCloses); });
     dateEl.addEventListener("input", autofillCloses);
     autofillCloses();
 
@@ -3132,7 +3143,8 @@
     document.getElementById("cy_submit").addEventListener("click", function(){
       var close = parseFloat(closeEl.value), dep = signedDeposit(depEl.value), date = dateEl.value;
       var spyEl = document.getElementById("cy_spy"), qqqEl = document.getElementById("cy_qqq");
-      if (isNaN(close) || close<=0 || !date){ alert("날짜와 오늘 종가는 필수예요."); return; }
+      if (!date){ alert("마감일이 비어 있어요."); return; }
+      if (isNaN(close) || close<=0){ alert("그 날 종가를 아직 못 받아왔어요. 장이 끝난 뒤 다시 열어주세요."); return; }
       var fills = validFills();
       if (pendingFills.length && fills.length !== pendingFills.length){
         if (!confirm("수량이나 가격이 비어있는 체결 항목이 있어요. 그건 빼고 기록할까요?")) return;
@@ -4325,11 +4337,25 @@
   function closeOnOrBefore(sym, dateStr){
     var rows = SERIES_CACHE[(sym || "").toUpperCase()];
     if (!rows || !rows.length || !dateStr) return null;
-    if (dateStr > rows[rows.length-1].date) return null;
+    var lastDate = rows[rows.length-1].date;
+    // 받아둔 범위를 넘어선 날짜. 주말은 장이 안 서는 게 확실하니 금요일 종가가
+    // 그 날의 정해진 값이다. 평일이면 아직 종가가 안 나온 것일 수 있어 비운다
+    // (그 날 봉이 나오면 lastDate 가 넘어가면서 아래 일반 경로로 풀린다 —
+    //  평일 휴장일도 하루 지나면 그렇게 저절로 풀린다).
+    if (dateStr > lastDate && !isWeekend(dateStr)) return null;
     for (var i = rows.length - 1; i >= 0; i--){
       if (rows[i].date <= dateStr) return rows[i].close;
     }
     return null;
+  }
+  function isWeekend(dateStr){
+    var d = new Date(dateStr + "T00:00:00").getDay();
+    return d === 0 || d === 6;
+  }
+  // 어디까지 받아왔는지 — 종가가 비었을 때 이유를 적어주려고 쓴다.
+  function latestSeriesDate(sym){
+    var rows = SERIES_CACHE[(sym || "").toUpperCase()];
+    return (rows && rows.length) ? rows[rows.length-1].date : null;
   }
 
   // 이 티커를 실제로 들고 있으면 평단을 같이 그려서, 지금 가격이 내 평단
@@ -5351,7 +5377,7 @@
       : "<b>내일이 이 사이클 마감일이에요.</b>");
     el.innerHTML = '<h3>사이클 마감 알림</h3>' +
       '<div class="card-desc">' + msg + ' (' + fmtDate(info.end) + ') ' +
-        '아래 <b>②③</b>에 체결내역과 마감일 종가를 넣고 마감하면 다음 사이클이 열려요.</div>' +
+        '아래 <b>②</b>에 체결내역만 넣고 마감하면 다음 사이클이 열려요. 마감일 종가는 자동으로 들어가요.</div>' +
       '<div style="display:flex;gap:8px;margin-top:10px;">' +
         '<button class="btn btn-primary btn-sm" id="goCloseBtn" type="button">지금 마감하러 가기</button></div>';
     mainArea.appendChild(el);
@@ -6136,7 +6162,7 @@
       var warn = document.createElement("div");
       warn.className = "footnote";
       warn.style.marginBottom = "8px";
-      warn.textContent = "SPY·QQQ 종가를 사이클 입력에서 넣어주면 이 그래프가 채워져요.";
+      warn.textContent = "SPY·QQQ 종가는 사이클을 마감할 때 자동으로 들어가요. 마감 기록이 쌓이면 이 그래프가 채워져요.";
       host.appendChild(warn);
     }
 
