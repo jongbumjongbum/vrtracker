@@ -1168,8 +1168,59 @@
           return '<div class="approval-row"><span class="email">' +
             new Date(b.at).toLocaleString("ko-KR") + ' · 기록 ' + b.count + '개' +
             '<br><span class="footnote">' + escapeHtml(b.reason || "") + '</span></span>' +
-            '<button type="button" class="btn btn-sm" data-restore="' + i + '">되돌리기</button></div>';
+            '<button type="button" class="btn btn-sm btn-ghost" data-restore-holdings="' + i + '">종목 기록만</button> ' +
+            '<button type="button" class="btn btn-sm" data-restore="' + i + '">전체 되돌리기</button></div>';
         }).join("");
+        // 동기화가 종목 매매기록만 통째로 날려먹는 일이 있었다. 그때 전체를
+        // 되돌리면 그 뒤에 적어둔 VR 사이클까지 같이 사라지므로, 종목 기록만
+        // 골라 가져올 길을 둔다. 예수금·손익·VR·무매는 건드리지 않는다 —
+        // 예수금은 이미 증권사 숫자로 맞춰둔 값이라 여기서 움직이면 안 된다.
+        Array.prototype.forEach.call(list.querySelectorAll("[data-restore-holdings]"), function(btn){
+          btn.addEventListener("click", function(){
+            var b = readBackups(currentUserId)[parseInt(btn.getAttribute("data-restore-holdings"), 10)];
+            if (!b || !b.state || !b.state.portfolio) return;
+            var from = b.state.portfolio.holdings || [];
+            // 먼저 훑어서 뭘 가져올지만 정한다. 실제로 고치는 건 사용자가
+            // 확인을 누르고 "직전 기록"을 백업한 뒤에 한다 — 순서가 바뀌면
+            // 백업에 이미 고쳐진 상태가 들어가 되돌릴 수 없다.
+            var plan = [];
+            from.forEach(function(bh){
+              if (!bh.ticker) return;
+              var cur = state.portfolio.holdings.filter(function(x){
+                return (x.ticker||"").toUpperCase() === (bh.ticker||"").toUpperCase();
+              })[0];
+              var curN = cur ? (cur.trades||[]).length : 0;
+              var bakN = (bh.trades||[]).length;
+              // 지금이 더 많이 들고 있으면 그게 최신이다. 덮지 않는다.
+              if (bakN <= curN) return;
+              plan.push({ cur: cur, bak: bh, label: bh.ticker + " " + curN + "건 → " + bakN + "건" });
+            });
+            if (!plan.length){
+              alert("이 백업에 지금보다 많은 매매기록이 없어요. 가져올 게 없습니다.");
+              return;
+            }
+            var labels = plan.map(function(p){ return p.label; });
+            if (!confirm("이 백업에서 종목 매매기록만 가져올까요?\n\n" + labels.join("\n") +
+              "\n\n예수금·손익 탭 입력·VR·무매는 그대로 둡니다.\n지금 기록은 백업으로 남겨둬요.")) return;
+            stashBackup(currentUserId, state, "종목 기록만 가져오기 직전");
+            plan.forEach(function(p){
+              var bh = p.bak;
+              if (p.cur){
+                p.cur.qty = bh.qty; p.cur.avgCost = bh.avgCost;
+                p.cur.realizedPL = bh.realizedPL || 0;
+                p.cur.trades = JSON.parse(JSON.stringify(bh.trades || []));
+                if (bh.krwSeedCost != null){ p.cur.krwSeedCost = bh.krwSeedCost; p.cur.krwSeedQty = bh.krwSeedQty; }
+              } else {
+                state.portfolio.holdings.push(JSON.parse(JSON.stringify(bh)));
+              }
+            });
+            saveState();
+            render();
+            modal.classList.add("hidden");
+            alert("가져왔어요.\n\n" + labels.join("\n") +
+              "\n\n백업 시각 이후의 매매는 안 들어 있어요 — 빠진 날짜가 있으면 직접 기록해주세요.");
+          });
+        });
         Array.prototype.forEach.call(list.querySelectorAll("[data-restore]"), function(btn){
           btn.addEventListener("click", function(){
             var b = readBackups(currentUserId)[parseInt(btn.getAttribute("data-restore"), 10)];
