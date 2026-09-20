@@ -5480,7 +5480,26 @@
       if (priceInput){
         priceInput.addEventListener("change", function(){ h.currentPrice = parseFloat(this.value)||0; commit(); });
       }
+      // 이 버튼 하나가 매매기록 전부를 데려간다. 확인창도 백업도 없어서,
+      // 다 판 종목을 목록에서 치우려고 누른 한 번에 SOXL 매매 37건이
+      // 통째로 사라진 적이 있다 (지우고 같은 티커를 새로 만들면 수량만
+      // 있고 기록은 0건인 상태가 된다 — 딱 그 모습이었다).
+      // 예수금은 건드리지 않는다. 그 매매로 실제로 오간 돈이라 되돌리면
+      // 증권사 숫자와 어긋난다 — 대신 되돌릴 수 있게 백업을 남긴다.
       tr.querySelector(".h-del").addEventListener("click", function(){
+        var n = (h.trades || []).length;
+        var label = h.ticker || "새 종목";
+        var isEmpty = !h.ticker && !(h.qty || 0) && !n;
+        if (!isEmpty){
+          var msg = n
+            ? (label + " 종목을 지울까요?\n\n" +
+               "여기 적어둔 매수/매도 기록 " + n + "건도 같이 사라져요.\n" +
+               "예수금은 그대로 둡니다 (그 매매로 실제 오간 돈이라서요).\n\n" +
+               "지우기 직전 기록은 [기록 복구]에 남겨둘게요.")
+            : (label + " 종목을 지울까요?");
+          if (!confirm(msg)) return;
+          if (n && currentUserId) stashBackup(currentUserId, state, "종목 " + label + " 지우기 직전");
+        }
         state.portfolio.holdings = state.portfolio.holdings.filter(function(x){ return x.id !== id; });
         saveState();
         renderManualHoldingsTable(host);

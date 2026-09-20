@@ -343,6 +343,42 @@
     return bad;
   };
 
+  // 매매기록이 있는 종목을 지우면 반드시 묻고, 되돌릴 백업을 남겨야 한다.
+  // 예전엔 확인창 없이 한 번 클릭에 기록이 통째로 사라졌다.
+  CASES.deleteHoldingAsksAndBacksUp = function(bad){
+    var hId = addHolding('KKK');
+    recordTrade(hId, 'buy', 2, 100, null, '2026-09-01');
+    var beforeBk = (JSON.parse(localStorage.getItem(KEY + '_backup') || '[]') || []).length;
+    var asked = null;
+    var rc = window.confirm;
+    window.confirm = function(m){ asked = String(m); return true; };
+    try {
+      var tr = document.querySelector('#manualHoldingsHost tr[data-id="' + hId + '"]');
+      tr.querySelector('.h-del').click();
+    } finally { window.confirm = rc; }
+    if (asked === null){ bad.push('매매기록이 있는데 묻지 않고 지움'); return; }
+    if (asked.indexOf('1건') === -1) bad.push('몇 건이 사라지는지 안 알려줌: ' + asked);
+    if (holding(hId)) bad.push('확인했는데 종목이 안 지워짐');
+    var after = (JSON.parse(localStorage.getItem(KEY + '_backup') || '[]') || []);
+    if (after.length <= beforeBk) bad.push('지우기 직전 백업이 안 남음');
+    else if (String(after[0].reason||'').indexOf('지우기 직전') === -1) bad.push('백업 라벨이 이상함: ' + after[0].reason);
+  };
+
+  // 빈 줄은 잘못 눌러 만든 것이라 묻지 않고 지운다.
+  CASES.deleteEmptyHoldingNoPrompt = function(bad){
+    tab('portfolio');
+    $('addHoldingBtn').click();
+    var rows = document.querySelectorAll('#manualHoldingsHost tbody tr');
+    var trEl = rows[rows.length - 1];
+    var newId = trEl.getAttribute('data-id');
+    var asked = false;
+    var rc = window.confirm;
+    window.confirm = function(){ asked = true; return true; };
+    try { trEl.querySelector('.h-del').click(); } finally { window.confirm = rc; }
+    if (asked) bad.push('빈 줄인데 물어봄');
+    if (holding(newId)) bad.push('빈 줄이 안 지워짐');
+  };
+
   window.__krwTest = function(only){
     var bad = [];
     Object.keys(CASES).forEach(function(name){
