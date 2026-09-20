@@ -53,6 +53,11 @@
         from: function(table){
           return {
             select: function(cols, opts){
+              // 조회만 실패하는 상황을 흉내 낸다. 새로고침을 건너야 해서
+              // localStorage 에 둔다 (window 변수는 reload 에 날아간다).
+              if (table === "vr_data" && localStorage.getItem('__failCloudRead')){
+                return query(function(){ return { data: null, error: { message: "forced read failure" } }; });
+              }
               if (table === "vr_data") return query(function(){ return { data: cloudRow ? { data: cloudRow } : null, error: null }; });
               if (opts && opts.count) return query(function(){ return { count: 0, error: null }; });
               if (cols === "approved") return query(function(){ return { data: { approved: true }, error: null }; });

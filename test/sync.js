@@ -162,6 +162,7 @@
     },
     {
       name: "탭에 돌아왔을 때 서버가 더 적으면 묻고, 취소하면 화면을 지킨다",
+      reloads: true,
       seed: function(){
         // 화면·서버 모두 20건으로 맞춰두고 시작한다. 확인은 부팅 뒤에 한다.
         var full = mkState(20, iso(60*60*1000), 'full');
@@ -199,6 +200,47 @@
         ];
       }
     }
+    ,{
+      name: "서버를 못 읽었을 때 이 기기 사본으로 서버를 덮지 않는다",
+      seed: function(){
+        // 서버엔 33건이 있는데 이 기기엔 3건뿐이다. 조회가 실패하면 예전엔
+        // "새 계정"으로 보고 이 3건을 그대로 올려 서버를 날렸다.
+        localStorage.setItem(CLOUD, JSON.stringify(mkState(33, iso(60*60*1000), 'cloud')));
+        localStorage.setItem(KEY, JSON.stringify(mkState(3, iso(0), 'mine')));
+        localStorage.setItem('__failCloudRead', '1');
+      },
+      check: function(){
+        localStorage.removeItem('__failCloudRead');
+        return [
+          ["서버 33건이 그대로", cloudCount() === 33],
+          ["도중에도 서버가 줄지 않음", window.__minCloudCount === null || window.__minCloudCount >= 33]
+        ];
+      }
+    }
+    ,{
+      name: "부팅 때 서버를 못 읽어도, 연결되면 미뤄둔 기록이 올라간다",
+      seed: function(){
+        // 서버는 비어 있고 이 기기엔 9건이 있다. 부팅 조회를 실패시키면
+        // 예전 판본은 cloudReconciled 가 영영 false 로 남아, 네트워크가
+        // 돌아와도 이 9건이 서버에 끝내 안 올라갔다.
+        localStorage.removeItem(CLOUD);
+        localStorage.setItem(KEY, JSON.stringify(mkState(9, iso(0), 'mine')));
+        localStorage.setItem('__failCloudRead', '1');
+      },
+      after: function(done){
+        // 네트워크가 돌아온 것처럼 만들고 탭 복귀를 흉내 낸다.
+        localStorage.removeItem('__failCloudRead');
+        window.dispatchEvent(new Event('focus'));
+        done();
+      },
+      check: function(){
+        localStorage.removeItem('__failCloudRead');
+        return [
+          ["미뤄둔 9건이 서버에 올라감", cloudCount() === 9],
+          ["화면도 9건 그대로", localCount() === 9]
+        ];
+      }
+    }
   ];
 
   function readResults(){
@@ -209,6 +251,7 @@
   function runCase(i){
     localStorage.setItem(PROGRESS, String(i));
     localStorage.removeItem(KEY + '_backup');
+    localStorage.removeItem('__failCloudRead');
     clearAsked();
     CASES[i].seed();
     location.reload();
@@ -239,8 +282,13 @@
       }
       if (c.after && !sessionStorage.getItem('__syncAfter' + i)){
         sessionStorage.setItem('__syncAfter' + i, '1');
-        c.after(function(){});
-        return;   // reload 가 걸리므로 여기서 끝. 다음 로드에서 이어진다.
+        var reloaded = false;
+        c.after(function(){ reloaded = true; });
+        // after 가 reload 를 걸면 다음 로드에서 이어진다. 안 걸었으면
+        // (탭 복귀만 흉내 낸 경우) 여기서 그대로 확인으로 넘어간다.
+        if (c.reloads) return;
+        finish();
+        return;
       }
       finish();
     }, 1800);

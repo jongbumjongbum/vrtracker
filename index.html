@@ -926,6 +926,32 @@
     } catch(e){ return []; }
   }
   // 덮어쓰기 전에 무조건 한 부 남긴다. 최근 5개만 들고 있는다.
+  // 용량이 모자랄 때 그냥 포기하면, 백업이 제일 필요한 순간에 백업이 없다.
+  // 버려도 되는 것부터 비우고 다시 해본다 — 차트 시세 캐시는 다시 받으면 그만이다.
+  // shrink(i) 는 호출한 쪽이 주는 "더 작은 payload"다. 없으면 null 을 돌려준다.
+  function setItemResilient(key, makeValue, shrink){
+    // 값도 함수로 받는다. JSON.stringify 자체가 터지는 경우(순환 참조, 메모리)
+    // 가 있는데 인자로 먼저 계산해 넘기면 그 예외는 여기서 못 잡는다.
+    function put(){
+      var v = (typeof makeValue === "function") ? makeValue() : makeValue;
+      localStorage.setItem(key, v);
+    }
+    try { put(); return true; } catch(e){}
+    // 지울 키는 먼저 다 모은다. 본 기록과 백업은 절대 건드리지 않는다.
+    var junk = Object.keys(localStorage).filter(function(k){ return k.indexOf("vrtracker_series_") === 0; });
+    if (junk.length){
+      junk.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
+      try { put(); return true; } catch(e){}
+    }
+    if (shrink){
+      for (var i = 0; i < 4; i++){
+        var smaller = shrink(i);
+        if (smaller == null) break;
+        try { localStorage.setItem(key, smaller); return true; } catch(e){}
+      }
+    }
+    return false;
+  }
   function stashBackup(userId, st, reason){
     if (!userId || !st) return;
     try {
@@ -933,9 +959,17 @@
       var last = arr[0];
       if (last && last.updatedAt === (st.updatedAt || null) && last.count === recordCount(st)) return;
       arr.unshift({ at: new Date().toISOString(), reason: reason, updatedAt: st.updatedAt || null, count: recordCount(st), state: st });
-      localStorage.setItem(backupKey(userId), JSON.stringify(arr.slice(0, 5)));
-    } catch(e){ /* 용량이 모자라면 백업은 포기해도 본 저장은 계속돼야 한다 */ }
+      // 자리가 모자라면 오래된 백업부터 버린다. 최근 것이 제일 귀하다.
+      var ok = setItemResilient(backupKey(userId), function(){ return JSON.stringify(arr.slice(0, 5)); }, function(i){
+        var n = 4 - i;   // 5→4→3→2→1. 언제나 slice(0,n) 이라 가장 최근 것이 끝까지 남는다.
+        return n >= 1 ? JSON.stringify(arr.slice(0, n)) : null;
+      });
+      if (!ok) setSaveStatus("저장 공간이 모자라 되돌리기용 백업을 남기지 못했어요", true);
+      updateRecoverBtn();
+      return ok;
+    } catch(e){ /* 백업이 실패해도 본 저장은 계속돼야 한다 */ }
     updateRecoverBtn();
+    return false;
   }
   function updateRecoverBtn(){
     var btn = document.getElementById("recoverBtn");
@@ -956,7 +990,12 @@
   function saveState(){
     if (!currentUserId) return;
     state.updatedAt = new Date().toISOString();
-    try { localStorage.setItem(localKey(currentUserId), JSON.stringify(state)); } catch(e){}
+    // 이 기기에 못 적었으면 알려야 한다. 조용히 넘어가면 탭을 닫는 순간
+    // 그동안 적은 게 통째로 사라지는데 아무도 모른다.
+    localSaveFailed = !setItemResilient(localKey(currentUserId), function(){ return JSON.stringify(state); });
+    if (localSaveFailed){
+      setSaveStatus("이 기기에 저장하지 못했어요 (저장 공간 부족) — 탭을 닫으면 사라질 수 있어요", true);
+    }
     if (!cloudReconciled){ pendingCloudPush = true; return; }
     cloudSave(currentUserId, state);
   }
@@ -969,8 +1008,12 @@
     }
   }
 
+  // 이 기기에 못 적은 건 클라우드가 잘 됐든 말든 제일 나쁜 소식이다.
+  // "저장됨" 같은 클라우드 메시지가 그걸 덮어버리면 안 된다.
+  var localSaveFailed = false;
   var saveStatusTimer = null;
   function setSaveStatus(text, isError){
+    if (localSaveFailed && !isError) return;
     var el = document.getElementById("saveStatus");
     if (!el) return;
     el.textContent = text || "";
@@ -979,13 +1022,17 @@
     if (text && !isError) saveStatusTimer = setTimeout(function(){ el.textContent = ""; }, 2000);
   }
 
+  // 조회 실패와 "서버에 아직 없음"은 전혀 다른 상황이다. 둘 다 null 로
+  // 돌려주던 시절엔, 읽기만 실패해도 새 계정으로 보고 이 기기 사본을
+  // 그대로 올려 서버를 덮을 수 있었다. ok 로 구분해서 오류면 아무것도
+  // 올리지 않는다 (이 기기 저장은 계속된다).
   async function cloudLoad(userId){
-    if (!sb) return null;
+    if (!sb) return { ok: false, data: null };
     try {
       var res = await sb.from("vr_data").select("data").eq("user_id", userId).maybeSingle();
-      if (res.error){ console.error("cloud load error", res.error); return null; }
-      return res.data ? res.data.data : null;
-    } catch(e){ console.error("cloud load failed", e); return null; }
+      if (res.error){ console.error("cloud load error", res.error); return { ok: false, data: null }; }
+      return { ok: true, data: res.data ? res.data.data : null };
+    } catch(e){ console.error("cloud load failed", e); return { ok: false, data: null }; }
   }
   // 저장 요청이 겹치면 늦게 출발한 것이 먼저 도착하고, 먼저 출발한 것이 나중에
   // 도착해 서버를 옛 내용으로 되돌릴 수 있다. 저장은 흔히 연달아 일어난다 —
@@ -1017,6 +1064,15 @@
       // 그래서 올리기 전에 서버가 우리가 아는 것보다 앞서 있는지 보고, 앞서 있으면
       // 그 사본을 이 기기에 남긴 뒤에 올린다 — 조용히 없어지는 일만은 막는다.
       var srvRow = await sb.from("vr_data").select("data").eq("user_id", userId).maybeSingle();
+      // 서버를 못 읽은 걸 "서버에 아무것도 없다"로 보면, 남의 기록 위에
+      // 이 기기 사본을 그대로 덮어쓴다. 읽기에 실패했으면 이번엔 올리지
+      // 않고 다음 저장이나 탭 복귀 때 다시 시도한다.
+      if (srvRow && srvRow.error){
+        console.error("cloud precheck error", srvRow.error);
+        pendingCloudPush = true;
+        setSaveStatus("서버를 확인하지 못해 올리지 않았어요 — 이 기기에는 저장됐어요", true);
+        return;
+      }
       var srv = (srvRow && srvRow.data) ? srvRow.data.data : null;
       if (srv && stateAt(srv) > lastServerAt && stateAt(srv) !== stateAt(stateObj)){
         // 우리가 모르는 사이 다른 기기가 저장했다. 그쪽에 기록이 더 많으면
@@ -1329,9 +1385,15 @@
     // 대신 그 개수에서 assetSnapshots 를 뺐다 — 그게 이 버그의 원인이었다.
     // 무엇이 사라지는지는 id 대조로 뽑아서 안내 문구에만 쓴다.
     var lostN = recordCount(state) - recordCount(cloud);
+    // 사라질 기록은 개수와 상관없이 늘 따져본다. 개수가 같거나 서버가 많아도
+    // 종류가 다른 기록끼리 상쇄되면 무언가는 없어질 수 있다 (매매 37건이
+    // 빠지고 VR 사이클 37개가 늘어난 경우처럼).
+    var lost = missingRecords(state, cloud);
+    // 묻는 기준은 예전 그대로 개수다. 사라지는 게 있을 때마다 묻게 했더니
+    // 서로 조금만 갈라져도 매번 물어서 못 쓰게 됐다. 대신 없어질 게 있으면
+    // 묻지 않더라도 되돌릴 수 있게 백업은 남긴다 (한 번만).
+    if (lost.length) stashBackup(currentUserId, state, "서버 사본을 받기 전 이 기기 기록");
     if (lostN > 0){
-      var lost = missingRecords(state, cloud);
-      stashBackup(currentUserId, state, "서버 사본을 받기 전 이 기기 기록");
       if (!confirm("다른 기기에서 저장한 기록이 있는데, 지금 이 기기 기록보다 " + lostN + "개 적어요.\n\n" +
         (lost.length ? ("사라지는 것: " + describeMissing(lost) + "\n\n") : "") +
         "다른 기기가 옛 기록을 올렸을 수 있어요.\n\n" +
@@ -1355,10 +1417,23 @@
     if (!currentUserId || !appReady || cloudSyncing) return;
     cloudSyncing = true;
     try {
-      var cloud = await cloudLoad(currentUserId);
-      if (!cloud) return;
-      if (stateAt(cloud) <= stateAt(state)) { lastServerAt = stateAt(cloud); return; }
-      if (!adoptCloudMaybeSmaller(cloud)) return;
+      var got = await cloudLoad(currentUserId);
+      if (!got.ok) return;
+      // 부팅 때 서버를 못 읽었으면 cloudReconciled 가 false 로 남아, 그 뒤
+      // 저장이 전부 이 기기에만 쌓인다. 여기서 읽기에 성공했으면 그게 곧
+      // 미뤄둔 맞춰보기이니, 마무리하고 쌓인 변경을 올려보낸다.
+      var firstReconcile = !cloudReconciled;
+      var cloud = got.data;
+      if (!cloud || stateAt(cloud) <= stateAt(state)){
+        if (cloud) lastServerAt = stateAt(cloud);
+        if (firstReconcile) markCloudReconciled();
+        return;
+      }
+      if (!adoptCloudMaybeSmaller(cloud)){
+        if (firstReconcile) markCloudReconciled();
+        return;
+      }
+      if (firstReconcile){ pendingCloudPush = false; markCloudReconciled(); }
       setSaveStatus("다른 기기에서 저장한 기록을 불러왔어요");
     } finally { cloudSyncing = false; }
   }
@@ -1400,7 +1475,14 @@
       updateRecoverBtn();
       fetchFxRate(false, true);   // 무료·무제한 API라 켤 때 조용히 한 번 받아온다
 
-      var cloud = await cloudLoad(currentUserId);
+      var got = await cloudLoad(currentUserId);
+      // 서버를 못 읽었으면 여기서 멈춘다. markCloudReconciled() 를 부르지
+      // 않으므로 앞으로의 저장은 이 기기에만 쌓이고, 서버는 건드리지 않는다.
+      if (!got.ok){
+        setSaveStatus("서버에 연결하지 못했어요 — 이 기기에만 저장돼요", true);
+        return;
+      }
+      var cloud = got.data;
       if (cloud){
         // Keep whichever copy is newer. Taking the cloud unconditionally threw
         // away edits that were saved locally but never reached the server.
@@ -5498,7 +5580,13 @@
                "지우기 직전 기록은 [기록 복구]에 남겨둘게요.")
             : (label + " 종목을 지울까요?");
           if (!confirm(msg)) return;
-          if (n && currentUserId) stashBackup(currentUserId, state, "종목 " + label + " 지우기 직전");
+          // 백업을 못 남겼으면 지우지 않는다. 되돌릴 방법이 없는 채로
+          // 매매기록을 통째로 버리는 게 애초에 이 사고의 모양이었다.
+          if (n && currentUserId && !stashBackup(currentUserId, state, "종목 " + label + " 지우기 직전")){
+            alert("되돌리기용 백업을 남기지 못해서 지우지 않았어요.\n\n" +
+              "저장 공간이 모자란 것 같아요. 브라우저 저장 공간을 비운 뒤 다시 해주세요.");
+            return;
+          }
         }
         state.portfolio.holdings = state.portfolio.holdings.filter(function(x){ return x.id !== id; });
         saveState();
