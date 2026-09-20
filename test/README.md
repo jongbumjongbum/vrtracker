@@ -74,6 +74,18 @@ var s=document.createElement('script'); s.src='krw.js'; document.body.appendChil
 fuzz 는 종목 수량이 거래 기록에서만 생긴다고 보기 때문이다. 앱에서 정상으로
 허용하는 상태이니 버그가 아니다 — 두 검사는 각각 비운 상태에서 따로 돌린다.
 
+## 마감일 종가 자동 입력 검사 (vrclose.js)
+
+시세 서버를 부르지 않고, 앱이 읽는 자리(localStorage)에 일별 시세를 심어둔 뒤
+VR 마감 폼에 찍히는 값을 본다. 거래일 / 쉰 날(직전 거래일로 물러남) /
+아직 안 온 날(비워 둠) / 직접 적은 값(안 건드림) 네 가지.
+
+```js
+var s=document.createElement('script'); s.src='vrclose.js'; document.body.appendChild(s);
+```
+
+`__vrCloseReset()` 로 시세를 심고 새로고침한 뒤, 다시 붙여서 `__vrCloseTest()`.
+
 ## 기기 간 동기화 검사 (sync.js)
 
 기록을 두 번 날려먹은 자리라 따로 검사를 만들어 뒀어요. **다른 기기에 남아
@@ -108,4 +120,5 @@ __syncTest.report()
 - `stub.js` — 가짜 로그인·시세·환율 서버 (서버 사본을 심어둘 수 있어요)
 - `fuzz.js` — 무작위 조작 + 계산 불변식 검사
 - `krw.js` — 원화 매수 시나리오 검사 (정해진 순서를 밟으며 숫자 확인)
+- `vrclose.js` — VR 마감 폼이 종가를 스스로 채우는지 검사
 - `sync.js` — 기기 간 동기화 상황 검사

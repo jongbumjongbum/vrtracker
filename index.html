@@ -3084,6 +3084,37 @@
     }
     [closeEl, depEl, dateEl].forEach(function(el){ el.addEventListener("input", updatePreview); });
 
+    // 마감일 종가는 이미 받아둔 일별 시세 안에 들어 있다. 차트 탭만 꺼내 쓰고
+    // 있었을 뿐이라 여기서도 같은 걸 쓴다 — 사이클은 2주에 한 번이라 조회
+    // 부담도 없고, TQQQ·SOXL 은 차트가 이미 받아둬서 호출이 아예 없다.
+    // 직접 고친 칸은 건드리지 않는다 (타이핑하면 data-auto 가 떨어진다).
+    var spyEl = document.getElementById("cy_spy"), qqqEl = document.getElementById("cy_qqq");
+    var autoCloseFields = [[closeEl, inst.ticker], [spyEl, "SPY"], [qqqEl, "QQQ"]]
+      .filter(function(p){ return p[0] && p[1]; });
+    function autofillCloses(){
+      autoCloseFields.forEach(function(p){
+        var el = p[0], sym = String(p[1]).toUpperCase();
+        if (el.value !== "" && el.getAttribute("data-auto") !== "1") return;
+        var close = closeOnOrBefore(sym, dateEl.value);
+        if (close == null){
+          // 마감일이 아직 안 왔으면 비워 둔다. 앞서 자동으로 채워둔 값이
+          // 날짜를 미래로 바꾼 뒤에도 남아 있으면 그게 제일 위험하다.
+          if (el.getAttribute("data-auto") === "1"){ el.value = ""; el.removeAttribute("data-auto"); }
+          return;
+        }
+        el.value = close;
+        el.setAttribute("data-auto", "1");
+      });
+      updatePreview();
+    }
+    autoCloseFields.forEach(function(p){
+      var el = p[0];
+      el.addEventListener("input", function(){ el.removeAttribute("data-auto"); });
+      ensureSeries(String(p[1]).toUpperCase(), true, autofillCloses);
+    });
+    dateEl.addEventListener("input", autofillCloses);
+    autofillCloses();
+
     activeEntryApi = {
       focusClose: function(){
         closeEl.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -4265,16 +4296,40 @@
   // 메모리 → localStorage → API 순으로 확보한다. 이미 받아오는 중이면
   // 중복 호출하지 않는다(고정 차트 두 개가 동시에 뜨기 때문).
   var seriesFetching = {};
-  function ensureSeries(sym, quiet){
-    if (SERIES_CACHE[sym] || seriesFetching[sym]) return false;
+  // 받아오면 알려줘야 하는 쪽들. 차트 탭은 renderMain 으로 알아서 다시 그리지만,
+  // VR 마감 폼은 화면을 다시 그리면 사용자가 치던 입력이 날아가서 못 쓴다.
+  var seriesWaiters = {};
+  function flushSeriesWaiters(sym){
+    var ws = seriesWaiters[sym];
+    if (!ws) return;
+    delete seriesWaiters[sym];
+    ws.forEach(function(f){ f(); });
+  }
+  function ensureSeries(sym, quiet, done){
+    if (SERIES_CACHE[sym]) return false;
+    if (done) (seriesWaiters[sym] = seriesWaiters[sym] || []).push(done);
+    if (seriesFetching[sym]) return false;
     var local = loadSeriesLocal(sym);
-    if (local){ SERIES_CACHE[sym] = local; return false; }
+    if (local){ SERIES_CACHE[sym] = local; flushSeriesWaiters(sym); return false; }
     seriesFetching[sym] = true;
     fetchTimeSeries(sym, quiet).then(function(){
       delete seriesFetching[sym];
+      flushSeriesWaiters(sym);
       if (state.viewMode === "chart") renderMain();
     });
     return true;
+  }
+  // 그 날짜의 종가. 주말·휴장일이면 직전 거래일 종가가 맞는 값이다.
+  // 마지막 봉보다 뒤 날짜(=아직 오지 않은 날)면 null 이다 — 안 온 날의 종가를
+  // 오늘 종가로 채우면 평가금·밴드가 조용히 틀린 채로 기록된다.
+  function closeOnOrBefore(sym, dateStr){
+    var rows = SERIES_CACHE[(sym || "").toUpperCase()];
+    if (!rows || !rows.length || !dateStr) return null;
+    if (dateStr > rows[rows.length-1].date) return null;
+    for (var i = rows.length - 1; i >= 0; i--){
+      if (rows[i].date <= dateStr) return rows[i].close;
+    }
+    return null;
   }
 
   // 이 티커를 실제로 들고 있으면 평단을 같이 그려서, 지금 가격이 내 평단
