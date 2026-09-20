@@ -53,6 +53,30 @@
       updatedAt: when
     };
   }
+  // 매매기록과 자동 스냅샷을 섞어서 만든다. recordCount() 가 둘을 같이 세는
+  // 탓에, 스냅샷만 많은 사본이 "기록이 더 많다"고 오판되는지 보려는 것이다.
+  function mkStateWithTrades(opts){
+    var st = mkState(opts.mr || 0, opts.when, opts.tag);
+    var trades = [];
+    for (var i=0;i<(opts.trades||0);i++){
+      trades.push({ id: (opts.tag||'t') + 'tr' + i, date: '2026-09-01', type: 'buy', qty: 1, price: 100 });
+    }
+    st.portfolio.holdings = [{ id: 'h-soxl', ticker: 'SOXL', qty: (opts.trades||0), avgCost: 100, currentPrice: 100, trades: trades, realizedPL: 0 }];
+    var snaps = [];
+    for (var j=0;j<(opts.snaps||0);j++){
+      var d = new Date(Date.parse('2026-01-01') + j*86400000).toISOString().slice(0,10);
+      snaps.push({ date: d, totalAsset: 1000, unrealizedPL: 0, realizedPL: 0, cumulativePL: 0 });
+    }
+    st.portfolio.assetSnapshots = snaps;
+    return st;
+  }
+  function localTradeCount(){
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      var h = s && s.portfolio ? (s.portfolio.holdings||[])[0] : null;
+      return h ? (h.trades||[]).length : 0;
+    } catch(e){ return -1; }
+  }
   function localCount(){
     try {
       var s = JSON.parse(localStorage.getItem(KEY));
@@ -157,6 +181,21 @@
           ["말없이 바꾸지 않고 물어봄", askedCount() > 0],
           ["취소했더니 화면이 20건으로 지켜짐", localCount() === 20],
           ["서버도 20건으로 되돌아옴", cloudCount() === 20]
+        ];
+      }
+    }
+    ,{
+      name: "스냅샷만 많은 옛 사본이 매매기록을 말없이 덮지 않는다",
+      seed: function(){
+        // 서버: 매매기록 0건인데 자동 스냅샷이 40개 → recordCount 60
+        // 이 기기: 매매기록 15건에 스냅샷 20개 → recordCount 55
+        // 기록 수만 보면 서버가 "더 많다". 하지만 실제로 사라지는 건 매매기록 15건이다.
+        localStorage.setItem(CLOUD, JSON.stringify(mkStateWithTrades({ mr:20, trades:0,  snaps:40, when: iso(0),            tag:'cloud' })));
+        localStorage.setItem(KEY,   JSON.stringify(mkStateWithTrades({ mr:20, trades:15, snaps:20, when: iso(60*60*1000),  tag:'mine'  })));
+      },
+      check: function(){
+        return [
+          ["매매기록 15건이 살아있거나, 최소한 묻기는 했다", localTradeCount() === 15 || askedCount() > 0]
         ];
       }
     }

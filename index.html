@@ -860,8 +860,50 @@
   // 그 사이 다른 기기가 저장했다는 뜻이라, 통째로 덮기 전에 그 사본을 남긴다.
   var lastServerAt = 0;
   function stateAt(st){ return (st && st.updatedAt) ? Date.parse(st.updatedAt) : 0; }
-  // 사라지면 곤란한 것들의 개수. 어느 쪽 사본이 더 많은 기록을 담고 있는지
-  // 가늠하는 용도라 정확한 의미보다 놓치는 항목이 없는 게 중요하다.
+  // 사라지면 안 되는 기록 하나하나의 신분증.
+  //
+  // 예전엔 recordCount() 로 "어느 쪽이 더 많은가"만 견줬는데, 거기에 매일
+  // 자동으로 하나씩 늘어나는 assetSnapshots 가 같이 세어졌다. 그래서 며칠
+  // 더 켜두기만 한 옛 기기의 사본이, 매매기록이 십수 건 빠져 있는데도
+  // "기록이 더 많다"고 오판돼 말없이 덮어썼다 — 실제로 SOXL 매매 37건이
+  // 이렇게 사라졌다. 개수가 아니라 "무엇이 없어지는가"로 판단한다.
+  //
+  // assetSnapshots 는 뺀다. 총자산 그래프용으로 날마다 스스로 다시 쌓이고,
+  // 기기마다 제각각 생겨서 넣어두면 볼 때마다 경고가 뜬다.
+  function recordIds(st){
+    var ids = [];
+    if (!st) return ids;
+    (st.instances||[]).forEach(function(i){
+      (i.cycles||[]).forEach(function(c){ ids.push("vr:" + i.id + ":" + (c.id || c.date)); });
+    });
+    (st.muInstances||[]).forEach(function(m){
+      (m.days||[]).forEach(function(d){ ids.push("mu:" + m.id + ":" + (d.id || d.date)); });
+    });
+    var pf = st.portfolio || {};
+    (pf.holdings||[]).forEach(function(h){
+      (h.trades||[]).forEach(function(t){
+        ids.push("tr:" + (t.id || (h.ticker + "|" + t.date + "|" + t.type + "|" + t.qty + "|" + t.price)));
+      });
+    });
+    (pf.manualRealized||[]).forEach(function(m, i){ ids.push("mr:" + (m.id || (m.month + "|" + m.ticker + "|" + i))); });
+    (pf.cashLog||[]).forEach(function(e, i){ ids.push("cl:" + (e.id || (e.date + "|" + e.kind + "|" + i))); });
+    return ids;
+  }
+  // a 에는 있는데 b 에는 없는 기록. 비어있지 않으면, b 를 받는 순간 그만큼 사라진다.
+  function missingRecords(a, b){
+    var have = {};
+    recordIds(b).forEach(function(k){ have[k] = true; });
+    return recordIds(a).filter(function(k){ return !have[k]; });
+  }
+  // "무엇이" 없어지는지 사람 말로. 그냥 개수만 보여주면 지워도 되는 건지 알 수 없다.
+  function describeMissing(list){
+    var names = { tr: "종목 매매기록", vr: "VR 사이클", mu: "무매 기록", mr: "손익 직접입력", cl: "예수금 입출금" };
+    var byKind = {};
+    list.forEach(function(k){ var p = k.split(":")[0]; byKind[p] = (byKind[p] || 0) + 1; });
+    return Object.keys(byKind).map(function(k){ return (names[k] || k) + " " + byKind[k] + "건"; }).join(", ");
+  }
+  // 사라지면 곤란한 것들의 개수. 화면에 "기록 N개"로 보여줄 때만 쓴다 —
+  // 어느 쪽을 택할지 고르는 데는 쓰지 않는다 (위 missingRecords 를 쓴다).
   function recordCount(st){
     if (!st) return 0;
     var n = 0;
@@ -869,7 +911,11 @@
     (st.muInstances||[]).forEach(function(i){ n += (i.days||[]).length; });
     var pf = st.portfolio || {};
     (pf.holdings||[]).forEach(function(h){ n += (h.trades||[]).length; });
-    n += (pf.manualRealized||[]).length + (pf.cashLog||[]).length + (pf.assetSnapshots||[]).length;
+    // assetSnapshots 는 세지 않는다. 총자산 그래프용으로 앱을 켜기만 해도
+    // 날마다 하나씩 붙는데, 예전엔 이것까지 같이 세는 바람에 며칠 더 켜둔
+    // 옛 기기의 사본이 "기록이 더 많다"고 오판됐다. 그래서 매매기록이 십수
+    // 건 빠져 있는데도 말없이 덮어썼다 — SOXL 매매 37건이 이렇게 사라졌다.
+    n += (pf.manualRealized||[]).length + (pf.cashLog||[]).length;
     return n;
   }
   function readBackups(userId){
@@ -1278,12 +1324,18 @@
   // 다른 기기가 옛 사본을 올렸을 때 이쪽 기록이 조용히 사라지는 걸 막는 자리다.
   // 받아들였으면 true, 사용자가 이 기기 것을 지키기로 했으면 false.
   function adoptCloudMaybeSmaller(cloud){
-    var lost = recordCount(state) - recordCount(cloud);
-    if (lost > 0){
+    // 어느 쪽이 앞섰는지는 개수로 본다. id 대조로 바꿔봤더니, 서로 갈라진
+    // 기록이 조금만 있어도(옛 기기에만 있는 3건 같은) 매번 물어서 못 쓴다.
+    // 대신 그 개수에서 assetSnapshots 를 뺐다 — 그게 이 버그의 원인이었다.
+    // 무엇이 사라지는지는 id 대조로 뽑아서 안내 문구에만 쓴다.
+    var lostN = recordCount(state) - recordCount(cloud);
+    if (lostN > 0){
+      var lost = missingRecords(state, cloud);
       stashBackup(currentUserId, state, "서버 사본을 받기 전 이 기기 기록");
-      if (!confirm("다른 기기에서 저장한 기록이 있는데, 지금 이 기기 기록보다 " + lost + "개 적어요.\n\n" +
+      if (!confirm("다른 기기에서 저장한 기록이 있는데, 지금 이 기기 기록보다 " + lostN + "개 적어요.\n\n" +
+        (lost.length ? ("사라지는 것: " + describeMissing(lost) + "\n\n") : "") +
         "다른 기기가 옛 기록을 올렸을 수 있어요.\n\n" +
-        "[확인] 그 기록을 받아옵니다 (지금 기록은 [기록 복구]에 남겨뒀어요)\n" +
+        "[확인] 그래도 그 기록을 받아옵니다 (지금 기록은 [기록 복구]에 남겨뒀어요)\n" +
         "[취소] 지금 이 기기 기록을 그대로 두고, 서버에 다시 올립니다")){
         saveState();
         setSaveStatus("이 기기 기록을 지키고 서버에 다시 올렸어요");
