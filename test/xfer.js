@@ -233,6 +233,29 @@
     if (!near(vr('레거시VR').cycles[1].qty, q0 + 1)) bad.push('rejectsBadNumbers: 정상 입력 1주가 안 들어감');
   };
 
+  // 아직 마감 전인 사이클: 마감 폼의 버튼으로 체결 줄에 넣고, 마감할 때 무매
+  // 쪽 매도가 같이 적힌다. 마감 전에는 아무것도 안 바뀐다.
+  CASES.viaEntryForm = function(bad){
+    openCard('vr', '레거시VR');
+    var before = raw();
+    var a0 = mu('무매A').days.length, q0 = muQty('무매A');
+    set('cy_date', '2026-09-29');   // 심어둔 시세: 100 + 59%7 = 103
+    alerts.length = 0;
+    answers({ '번호를': '1', '몇 주': '2', '옮기는 가격': $('cy_close').value });
+    $('cyMuXferBtn').click();
+    var rows = document.querySelectorAll('#fillsListHost tbody tr');
+    if (rows.length !== 1 || rows[0].textContent.indexOf('무매A에서 옮김') === -1) bad.push('viaEntryForm: 체결 줄에 옮김 표시가 없음 (' + rows.length + '줄)');
+    changed(before, 'viaEntryForm(마감 전)', bad);
+    $('cy_submit').click();
+    var v = vr('레거시VR'), c = v.cycles[v.cycles.length-1];
+    if (c.date !== '2026-09-29' || !fillsEq(c.fills, [['buy',2,103]])) bad.push('viaEntryForm: 새 사이클 체결이 [매수2@103] 이 아님: ' + JSON.stringify(c && c.fills));
+    var m = mu('무매A'), d = m.days[m.days.length-1];
+    if (m.days.length !== a0 + 1 || d.date !== '2026-09-29' || !fillsEq(d.fills, [['sell',2,103]])) bad.push('viaEntryForm: 무매에 9/29 매도 2주가 안 적힘: ' + JSON.stringify(m.days.slice(-2)));
+    if (!near(d.qty, q0 - 2)) bad.push('viaEntryForm: 무매 수량 ' + d.qty + ' != ' + (q0 - 2));
+    if (!d.cashApplied) bad.push('viaEntryForm: 무매 기록에 cashApplied 가 없음');
+  };
+  function muQty(name){ var m = mu(name); return m.days.length ? m.days[m.days.length-1].qty : (m.initQty || 0); }
+
   window.__xferTest = function(){
     var bad = [];
     Object.keys(CASES).forEach(function(name){

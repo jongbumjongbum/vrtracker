@@ -215,6 +215,13 @@
           Math.max(1, Math.floor(rand() * (isSell ? Math.max(1,(last.qty||1)) : 20))),
           (10 + rand()*150).toFixed(2));
       }
+      // 마감 폼의 옮겨오기 버튼도 가끔 누른다 — 체결 줄로 들어갔다가 마감할 때
+      // 무매 쪽 매도가 같이 적히는 길이다.
+      if (rand() < 0.5 && $('cyMuXferBtn')){
+        var xa = { '번호를': String(1 + Math.floor(rand()*3)), '몇 주': String(1 + Math.floor(rand()*12)), '옮기는 가격': (10 + rand()*150).toFixed(2) };
+        window.prompt = function(q){ for (var k in xa){ if (String(q).indexOf(k) !== -1) return xa[k]; } return null; };
+        $('cyMuXferBtn').click();
+      }
       $('cy_submit').click();
     },
     deleteCycle: function(rand){

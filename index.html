@@ -1845,6 +1845,10 @@
   // 그 날짜 시점에 옮길 수 있는 최대 수량. 삽입 지점 이후의 매도가 하나라도
   // "가진 것보다 많이 판" 상태가 되지 않는 한도다 — 그렇게 되면 computeMuDay
   // 는 줄여서 팔지만 muNetCash 는 적힌 대금을 다 세서 그외 예수금이 부풀어 오른다.
+  function muNameById(id){
+    var m = (state.muInstances || []).find(function(x){ return x.id === id; });
+    return m ? m.name : "?";
+  }
   function muMaxTransferable(mu, date){
     var qty = mu.initQty || 0, atPoint = null, minAfter = Infinity;
     (mu.days || []).forEach(function(d){
@@ -1856,6 +1860,26 @@
     });
     if (atPoint === null) atPoint = qty;
     return round4(Math.max(0, Math.min(atPoint, minAfter)));
+  }
+  // 무매 쪽: 그 날짜 기록들 맨 뒤에 매도를 붙인다. 앞쪽 기록에 붙이면 그날
+  // 뒤에 산 물량을 못 팔아 줄여서 팔리는데 현금은 다 들어오는 꼴이 된다.
+  // 검사(시작일·최대 수량)는 부르는 쪽이 끝내고 온다.
+  function muSellLeg(mu, date, qty, price){
+    var sell = { type: "sell", qty: qty, price: price };
+    var lastSame = null;
+    (mu.days || []).forEach(function(d){ if (d.date === date) lastSame = d; });
+    mutateMuDays(mu, function(){
+      if (lastSame && lastSame.cashApplied){
+        lastSame.fills = (lastSame.fills || []).concat([sell]);
+      } else {
+        var close = closeOnOrBefore(mu.ticker, date);
+        mu.days.push({ id: uid(), date: date, close: close != null ? close : price, fills: [sell],
+          v: 2, tOverride: null, exhausted: false, cashApplied: true });
+        // sort 는 안정 정렬이라 같은 날짜 기록들 뒤에 남는다.
+        mu.days.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+      }
+    });
+    delete historyView[mu.id];
   }
   // 검사는 부르는 쪽(promptMuTransfer)이 끝내고 오지만, 여기서도 한 번 더
   // 막는다 — 반쪽만 바뀐 기록을 남기는 것보다 아무것도 안 하는 게 낫다.
@@ -1871,26 +1895,11 @@
     var base = (c.fills && c.fills.length) ? c.fills.slice() : legacyFillsFromCycle(c);
     var qtyBefore = c.qty || 0;
     var isLast = ci === inst.cycles.length - 1;
-    var sell = { type: "sell", qty: qty, price: price };
     var buy = { type: "buy", qty: qty, price: price };
     // ponytail: 무매 잔금·그외 예수금은 소수 4자리, VR Pool 은 센트로 반올림하는
     // 앱 전체 정책이라, 수량×가격이 센트로 안 떨어지면 두 쪽 합이 1센트 미만
     // 어긋날 수 있다. 다른 매매 기록도 같은 정책이므로 여기서 따로 맞추지 않는다.
-    // 무매 쪽: 그 날짜 기록들 맨 뒤에 매도를 붙인다. 앞쪽 기록에 붙이면 그날
-    // 뒤에 산 물량을 못 팔아 줄여서 팔리는데 현금은 다 들어오는 꼴이 된다.
-    var lastSame = null;
-    (mu.days || []).forEach(function(d){ if (d.date === date) lastSame = d; });
-    mutateMuDays(mu, function(){
-      if (lastSame && lastSame.cashApplied){
-        lastSame.fills = (lastSame.fills || []).concat([sell]);
-      } else {
-        var close = closeOnOrBefore(mu.ticker, date);
-        mu.days.push({ id: uid(), date: date, close: close != null ? close : price, fills: [sell],
-          v: 2, tOverride: null, exhausted: false, cashApplied: true });
-        // sort 는 안정 정렬이라 같은 날짜 기록들 뒤에 남는다.
-        mu.days.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
-      }
-    });
+    muSellLeg(mu, date, qty, price);
     // VR 쪽: 같은 날 사이클에 매수를 붙인다.
     warnIfNegativeQty(mutateVrCycles(inst, function(){
       c.fills = base.concat([buy]);
@@ -1898,7 +1907,6 @@
     }));
     if (isLast) applyFillsToRealAvgCost(inst, [buy], qtyBefore);
     delete historyView[inst.id];
-    delete historyView[mu.id];
     delete sellLadderExpand[inst.id];
     saveState();
     render();
@@ -1914,18 +1922,42 @@
     var n = Number(t);
     return Number.isFinite(n) ? n : NaN;
   }
-  // 묻는 순서: (같은 종목 무매가 여럿이면 번호) · 사이클 날짜 · 수량 · 가격.
-  // 전부 확인한 뒤에야 기록을 건드린다.
-  function promptMuTransfer(inst, sources){
+  // 어느 무매에서 몇 주를 얼마에 옮길지 묻는다. 같은 종목 무매가 여럿일 때만
+  // 번호를 묻고, 그 날짜 기준으로 옮길 수 있는 최대 수량 안에서만 받는다.
+  // 전부 확인한 뒤 {mu, qty, price} 를 돌려주고, 취소·잘못된 입력이면 null.
+  function askMuTransfer(sources, date, defaultPrice){
     var mu = sources[0];
     if (sources.length > 1){
       var list = sources.map(function(m, i){ return (i+1) + ". " + m.name + " (" + muLastState(m).qty + "주)"; }).join("\n");
       var pick = prompt("어느 무매에서 옮길까요? 번호를 적어주세요.\n\n" + list, "1");
-      if (pick === null) return;
+      if (pick === null) return null;
       var pi = parseStrictNumber(pick);
-      if (!(pi >= 1 && pi <= sources.length) || pi % 1 !== 0){ alert("1~" + sources.length + " 사이의 번호를 적어주세요."); return; }
+      if (!(pi >= 1 && pi <= sources.length) || pi % 1 !== 0){ alert("1~" + sources.length + " 사이의 번호를 적어주세요."); return null; }
       mu = sources[pi - 1];
     }
+    if (date < mu.startDate){
+      alert(mu.name + "은(는) " + fmtDate(mu.startDate) + "에 시작했어요.\n\n그보다 앞선 날짜로는 옮길 수 없어요.");
+      return null;
+    }
+    var maxQty = muMaxTransferable(mu, date);
+    var maxNote = "\n\n(그 날 이후에 적힌 무매 매도까지 감안한 수량이에요)";
+    if (!(maxQty > 0)){ alert(fmtDate(date) + " 기준으로 " + mu.name + "에서 옮길 수 있는 수량이 없어요." + maxNote); return null; }
+    var qs = prompt("몇 주를 옮길까요? (최대 " + maxQty + "주)", String(maxQty));
+    if (qs === null) return null;
+    var qty = parseStrictNumber(qs);
+    if (!(qty > 0)){ alert("수량은 0보다 큰 숫자여야 해요."); return null; }
+    if (qty > maxQty + 1e-9){ alert(fmtDate(date) + " 기준으로 " + mu.name + "에서 옮길 수 있는 건 최대 " + maxQty + "주예요." + maxNote); return null; }
+    var ps = prompt("옮기는 가격 ($)\n\n무매에서는 이 값에 판 것으로, VR에서는 이 값에 산 것으로 적혀요.\n기본값은 그 날 종가예요.", defaultPrice > 0 ? String(defaultPrice) : "");
+    if (ps === null) return null;
+    var price = parseStrictNumber(ps);
+    if (!(price > 0)){ alert("가격은 0보다 큰 숫자여야 해요."); return null; }
+    // 각각은 유한해도 곱이 넘칠 수 있다 — Infinity 가 Pool·예수금에 들어가면 끝이다.
+    if (!Number.isFinite(round2(qty * price))){ alert("수량 × 가격이 너무 커요. 다시 적어주세요."); return null; }
+    return { mu: mu, qty: qty, price: price };
+  }
+  // 이미 기록된 사이클에 붙이는 길 (VR 화면 위 버튼). 묻는 순서: (번호) ·
+  // 사이클 날짜 · 수량 · 가격. 전부 확인한 뒤에야 기록을 건드린다.
+  function promptMuTransfer(inst, sources){
     var lastC = inst.cycles[inst.cycles.length - 1];
     var ds = prompt("어느 사이클에 붙일까요? 사이클 시작일 (YYYY-MM-DD)\n\n그 날짜의 사이클 기록이 이미 있어야 해요.", lastC.date);
     if (ds === null) return;
@@ -1934,30 +1966,15 @@
     var ci = -1;
     for (var i = inst.cycles.length - 1; i >= 0; i--){ if (inst.cycles[i].date === date){ ci = i; break; } }
     if (ci === -1){
-      alert(fmtDate(date) + " 사이클 기록이 없어요.\n\n먼저 그 사이클을 마감(기록)한 뒤 옮겨주세요.\n" +
-        "옮기기는 새 사이클을 만들지 않아요 — 사이클이 하나 늘면 V가 한 번 더 자라서 계산이 틀어져요.");
-      return;
-    }
-    if (date < mu.startDate){
-      alert(mu.name + "은(는) " + fmtDate(mu.startDate) + "에 시작했어요.\n\n그보다 앞선 사이클로는 옮길 수 없어요.");
+      alert(fmtDate(date) + " 사이클 기록이 없어요.\n\n아직 마감 전이면 아래 마감 폼의 \"무매에서 옮겨오기\"로 체결 줄에 넣고 같이 마감하세요.\n" +
+        "여기서는 새 사이클을 만들지 않아요 — 사이클이 하나 늘면 V가 한 번 더 자라서 계산이 틀어져요.");
       return;
     }
     var c = inst.cycles[ci];
-    var maxQty = muMaxTransferable(mu, date);
-    var maxNote = "\n\n(그 날 이후에 적힌 무매 매도까지 감안한 수량이에요)";
-    if (!(maxQty > 0)){ alert(fmtDate(date) + " 기준으로 " + mu.name + "에서 옮길 수 있는 수량이 없어요." + maxNote); return; }
-    var qs = prompt("몇 주를 옮길까요? (최대 " + maxQty + "주)", String(maxQty));
-    if (qs === null) return;
-    var qty = parseStrictNumber(qs);
-    if (!(qty > 0)){ alert("수량은 0보다 큰 숫자여야 해요."); return; }
-    if (qty > maxQty + 1e-9){ alert(fmtDate(date) + " 기준으로 " + mu.name + "에서 옮길 수 있는 건 최대 " + maxQty + "주예요." + maxNote); return; }
-    var ps = prompt("옮기는 가격 ($)\n\n무매에서는 이 값에 판 것으로, VR에서는 이 값에 산 것으로 적혀요.\n기본값은 그 사이클의 마감 종가예요.", String(c.price));
-    if (ps === null) return;
-    var price = parseStrictNumber(ps);
-    if (!(price > 0)){ alert("가격은 0보다 큰 숫자여야 해요."); return; }
-    // 각각은 유한해도 곱이 넘칠 수 있다 — Infinity 가 Pool·예수금에 들어가면 끝이다.
+    var r = askMuTransfer(sources, date, c.price);
+    if (!r) return;
+    var mu = r.mu, qty = r.qty, price = r.price;
     var amt = round2(qty * price);
-    if (!Number.isFinite(amt)){ alert("수량 × 가격이 너무 커요. 다시 적어주세요."); return; }
     var msg = mu.name + " → " + inst.name + "\n\n" +
       "· 무매 " + mu.name + ": " + fmtDate(date) + "에 " + qty + "주를 " + fmtMoney(price) + "에 판 것으로 기록\n" +
       "· VR " + inst.name + ": " + fmtDate(date) + " 사이클(" + (ci + 1) + "번째)에 " + qty + "주를 " + fmtMoney(price) + "에 산 것으로 기록\n\n" +
@@ -3198,7 +3215,8 @@
         '<h3>② 위 주문표로 체결된 내역</h3>' +
         '<div class="card-desc">위 표대로 체결된 것만 한 줄씩 추가하세요. 아무것도 안 걸렸으면(홀드) 비워두면 돼요.</div>' +
         '<div id="fillsListHost"></div>' +
-        '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="addFillBtn" type="button">+ 체결 추가</button></div>' +
+        '<div class="form-actions" style="justify-content:flex-start;margin-top:8px;"><button class="btn btn-sm" id="addFillBtn" type="button">+ 체결 추가</button>' +
+          (muSources.length ? '<button class="btn btn-sm" id="cyMuXferBtn" type="button">무매에서 옮겨오기</button>' : '') + '</div>' +
 
         '<h3 style="margin-top:22px;">③ 사이클 마감 정보</h3>' +
         '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
@@ -3373,7 +3391,7 @@
             '<td data-label="구분"><select class="fill-type">' +
               '<option value="buy"' + (f.type==="buy"?" selected":"") + '>매수</option>' +
               '<option value="sell"' + (f.type==="sell"?" selected":"") + '>매도</option>' +
-            '</select></td>' +
+            '</select>' + (f.fromMu ? '<div class="footnote">무매 ' + escapeHtml(muNameById(f.fromMu)) + '에서 옮김 — 마감하면 그쪽에 매도로 적혀요</div>' : '') + '</td>' +
             '<td class="num" data-label="수량"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input fill-qty" value="' + (f.qty||"") + '" placeholder="수량" /></td>' +
             '<td class="num" data-label="가격"><input type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input fill-price" value="' + (f.price||"") + '" placeholder="체결가" /></td>' +
             '<td><button type="button" class="btn btn-sm btn-ghost btn-danger fill-del">삭제</button></td>' +
@@ -3381,7 +3399,8 @@
         }).join("") + '</tbody></table></div>';
       Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
         var i = parseInt(tr.getAttribute("data-i"), 10);
-        tr.querySelector(".fill-type").addEventListener("change", function(){ pendingFills[i].type = this.value; updatePreview(); });
+        // 무매에서 옮겨온 줄을 매도로 바꾸면 더는 옮기기가 아니다.
+        tr.querySelector(".fill-type").addEventListener("change", function(){ pendingFills[i].type = this.value; if (this.value !== "buy") delete pendingFills[i].fromMu; renderFillsList(); updatePreview(); });
         tr.querySelector(".fill-qty").addEventListener("input", function(){ pendingFills[i].qty = parseFloat(this.value)||0; updatePreview(); });
         tr.querySelector(".fill-price").addEventListener("input", function(){ pendingFills[i].price = parseFloat(this.value)||0; updatePreview(); });
         tr.querySelector(".fill-del").addEventListener("click", function(){ pendingFills.splice(i,1); renderFillsList(); updatePreview(); });
@@ -3390,6 +3409,17 @@
     renderFillsList();
     document.getElementById("addFillBtn").addEventListener("click", function(){
       pendingFills.push({ type: "buy", qty: 0, price: 0 });
+      renderFillsList();
+      updatePreview();
+    });
+    // 아직 마감 전인 사이클로 옮기기: 체결 줄로 넣어 두고, 마감할 때 무매 쪽
+    // 매도까지 같이 적는다 (cy_submit 아래). 그 전까지는 아무것도 안 바뀐다.
+    var cyMuXferBtn = document.getElementById("cyMuXferBtn");
+    if (cyMuXferBtn) cyMuXferBtn.addEventListener("click", function(){
+      if (!dateEl.value){ alert("마감일부터 골라주세요."); return; }
+      var r = askMuTransfer(muSources, dateEl.value, parseFloat(closeEl.value));
+      if (!r) return;
+      pendingFills.push({ type: "buy", qty: r.qty, price: r.price, fromMu: r.mu.id });
       renderFillsList();
       updatePreview();
     });
@@ -3478,6 +3508,22 @@
       }
       var overVr = findOverSell(fills, last.qty || 0);
       if (overVr){ alert(overSellMessage(overVr)); return; }
+      // 무매에서 옮겨온 줄은 마감과 함께 그쪽에 매도로 적힌다. 줄을 넣은 뒤
+      // 날짜나 수량을 고쳤을 수 있으니 여기서 다시 검사한다 — 한 무매에서
+      // 여러 줄이면 합쳐서 본다.
+      var xfers = fills.filter(function(f){ return f.fromMu && f.type === "buy"; });
+      var byMu = {};
+      xfers.forEach(function(f){ byMu[f.fromMu] = (byMu[f.fromMu] || 0) + f.qty; });
+      for (var muId in byMu){
+        var srcMu = (state.muInstances || []).find(function(m){ return m.id === muId; });
+        if (!srcMu){ alert("옮겨올 무매가 없어졌어요. 그 체결 줄을 지우고 다시 넣어주세요."); return; }
+        if (date < srcMu.startDate){ alert(srcMu.name + "은(는) " + fmtDate(srcMu.startDate) + "에 시작했어요.\n\n그보다 앞선 날짜로는 옮길 수 없어요."); return; }
+        var maxQ = muMaxTransferable(srcMu, date);
+        if (byMu[muId] > maxQ + 1e-9){
+          alert(fmtDate(date) + " 기준으로 " + srcMu.name + "에서 옮길 수 있는 건 최대 " + maxQ + "주예요.\n\n(그 날 이후에 적힌 무매 매도까지 감안한 수량이에요)");
+          return;
+        }
+      }
       // 마지막 기록보다 앞선 날짜를 넣으면 이 기록은 중간에 끼어들어간다. 그러면
       // 뒤 기록들의 V·Pool·밴드가 전부 다시 계산돼야 하는데, 예전엔 정렬만 하고
       // 넘어가서 그 뒤 숫자가 조용히 틀린 채로 남았다.
@@ -3499,6 +3545,10 @@
         inst.cycles.sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
         return replayCycles(inst);
       }));
+      xfers.forEach(function(f){
+        var srcMu = state.muInstances.find(function(m){ return m.id === f.fromMu; });
+        muSellLeg(srcMu, date, f.qty, f.price);
+      });
       currentSegment(inst, date).gDeferred = false;
       delete sellLadderExpand[inst.id];
       delete historyView[inst.id];
