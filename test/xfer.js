@@ -129,6 +129,13 @@
       updatedAt: now
     };
     localStorage.clear();
+    // 무매 기록 폼의 종가는 받아둔 시세에서만 채워지니, 시험 날짜들이 들어가게 심어둔다.
+    var values = [], t = Date.parse('2026-08-01');
+    for (var i = 0; i < 60; i++){
+      var d = new Date(t + i*86400000).toISOString().slice(0,10);
+      values.push({ date: d, close: 100 + (i % 7), high: 100 + (i % 7), low: 100 + (i % 7) });
+    }
+    localStorage.setItem('vrtracker_series_TQQQ', JSON.stringify({ fetchedAt: Date.now(), values: values }));
     localStorage.setItem(KEY, JSON.stringify(s));
     localStorage.setItem(CLOUD, JSON.stringify(s));
     location.reload();

@@ -3576,7 +3576,7 @@
       mainArea.innerHTML =
         '<div class="empty-state">' +
         '<h2>운용 중인 무매를 선택하거나 새로 만들어보세요</h2>' +
-        '<p>TQQQ·SOXL 무한매수법을 관리해요. 매일 종가와 체결내역을 입력하면 다음 ★지점·매수금·모드가 자동으로 계산돼요.</p>' +
+        '<p>TQQQ·SOXL 무한매수법을 관리해요. 매일 체결내역만 입력하면 종가는 자동으로 받아오고, 다음 ★지점·매수금·모드가 자동으로 계산돼요.</p>' +
         '<button class="btn btn-primary" id="emptyNewMuBtn" type="button">+ 새 무매 만들기</button>' +
         '</div>';
       document.getElementById("emptyNewMuBtn").addEventListener("click", openNewMuModal);
@@ -3796,11 +3796,12 @@
 
   function renderMuEntryFormHtml(inst, last){
     return '<h3>오늘 기록 입력</h3>' +
-      '<div class="card-desc">오늘 종가와 실제 체결내역을 입력하고, 오늘 T가 어떻게 진행됐는지 골라주세요. 매매가 없었으면 체결내역은 비워두세요.</div>' +
+      '<div class="card-desc">날짜를 고르면 그 날 종가는 자동으로 들어와요. 실제 체결내역만 입력하고, 오늘 T가 어떻게 진행됐는지 골라주세요. 매매가 없었으면 체결내역은 비워두세요.</div>' +
       '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
         field("날짜", '<input id="mu_e_date" type="date" autocomplete="off" value="' + todayStr() + '" />') +
-        field(inst.ticker + " 종가 ($)", '<input id="mu_e_close" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="종가" />') +
+        field(escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">그 날 종가를 자동으로 받아와요</span>', '<input id="mu_e_close" type="number" readonly tabindex="-1" />') +
       '</div>' +
+      '<div class="limit-box" id="muPriceNote" style="margin-top:12px;display:none;"></div>' +
       '<div style="margin-top:14px;">' +
         '<label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">체결내역 <span class="hint">매매가 있었으면 한 줄씩 추가하세요</span></label>' +
         '<div id="muFillsListHost"></div>' +
@@ -3904,6 +3905,32 @@
     if (exhaustedEl) exhaustedEl.addEventListener("change", updatePreview);
     refreshTAuto();
 
+    // 종가는 VR 마감 폼과 똑같이 받아둔 일별 시세에서 채운다. 손으로 적을 게
+    // 아니라 칸은 읽기 전용이고, 못 받아온 날은 비운 채 기록 버튼을 잠근다.
+    function autofillMuClose(){
+      var sym = String(inst.ticker || "").toUpperCase();
+      var close = closeOnOrBefore(sym, dateEl.value);
+      closeEl.value = close == null ? "" : close;
+      var note = document.getElementById("muPriceNote");
+      var submitBtn = document.getElementById("mu_e_submit");
+      if (note){
+        if (close == null){
+          var lastDate = latestSeriesDate(sym);
+          note.style.display = "";
+          note.innerHTML = '<div class="limit-line"><b>' + escapeHtml(sym) + ' 종가가 아직 안 나왔어요.</b> ' +
+            (lastDate ? ("받아온 마지막 거래일은 " + fmtDate(lastDate) + "이에요. ") : "시세를 아직 못 받아왔어요. ") +
+            '그 날 장이 끝나면 자동으로 채워져요 — 그때 다시 열어서 기록해주세요.</div>';
+        } else {
+          note.style.display = "none";
+        }
+      }
+      if (submitBtn) submitBtn.disabled = close == null;
+      updatePreview();
+    }
+    ensureSeries(String(inst.ticker || "").toUpperCase(), true, autofillMuClose);
+    dateEl.addEventListener("input", autofillMuClose);
+    autofillMuClose();
+
     activeEntryApi = {
       focusClose: function(){
         closeEl.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -3919,7 +3946,8 @@
 
     document.getElementById("mu_e_submit").addEventListener("click", function(){
       var input = buildInput();
-      if (isNaN(input.close) || input.close<=0 || !input.date){ alert("날짜와 종가는 필수예요."); return; }
+      if (!input.date){ alert("날짜가 비어 있어요."); return; }
+      if (isNaN(input.close) || input.close<=0){ alert("그 날 종가를 아직 못 받아왔어요. 장이 끝난 뒤 다시 열어주세요."); return; }
       if (pendingFills.length && input.fills.length !== pendingFills.length){
         if (!confirm("수량/가격이 비어있는 체결 항목은 빼고 기록할까요?")) return;
       }
