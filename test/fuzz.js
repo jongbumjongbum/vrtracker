@@ -357,6 +357,48 @@
       if (!btns.length) return 'skip';
       btns[Math.floor(rand()*btns.length)].click();
     },
+    // 무매 물량을 VR 사이클로 옮긴다. 묻는 순서는 (무매 번호) · 사이클 날짜 ·
+    // 수량 · 가격인데 무매 번호는 같은 종목 무매가 여럿일 때만 물으니, 순서가
+    // 아니라 질문 문구로 답을 고른다. 가끔 없는 날짜·너무 큰 수량도 넣어서
+    // 거절 경로가 기록을 안 건드리는지도 같이 본다.
+    transferMuToVr: function(rand){
+      // 아무 VR이나 고르면 같은 종목 무매가 없어 자주 건너뛴다. 버튼이 뜰
+      // 짝(사이클이 있는 VR + 같은 종목에 물량이 있는 무매)이 있는 VR 중에서 고른다.
+      var s = st();
+      var held = {};
+      (s.muInstances||[]).forEach(function(m){
+        var lastQ = m.days.length ? m.days[m.days.length-1].qty : (m.initQty||0);
+        if (lastQ > 0) held[(m.ticker||'').toUpperCase()] = true;
+      });
+      var cands = (s.instances||[]).filter(function(i){ return i.cycles.length && held[(i.ticker||'').toUpperCase()]; });
+      if (!cands.length) return 'skip';
+      var inst = cands[Math.floor(rand()*cands.length)];
+      tab('vr');
+      var cards = document.querySelectorAll('.instance-card');
+      for (var i=0;i<cards.length;i++){ if (cards[i].textContent.indexOf(inst.name) === 0) { cards[i].click(); break; } }
+      var btn = $('muXferBtn');
+      if (!btn) return 'skip';
+      var c = inst.cycles[Math.floor(rand()*inst.cycles.length)];
+      var ans = {
+        '번호를': String(1 + Math.floor(rand()*3)),
+        '사이클 시작일': rand() < 0.85 ? c.date : d(rand, c.date, 5),
+        '몇 주': String(1 + Math.floor(rand()*12)),
+        '옮기는 가격': (10 + rand()*150).toFixed(2)
+      };
+      window.prompt = function(q){
+        for (var k in ans){ if (String(q).indexOf(k) !== -1) return ans[k]; }
+        return null;
+      };
+      // 거절된 시도는 "실행"으로 세지 않는다 — VR 체결 수가 늘어야 진짜 옮긴 것이다.
+      function vrFillCount(){
+        var n = 0;
+        st().instances.forEach(function(i){ i.cycles.forEach(function(c){ n += (c.fills||[]).length; }); });
+        return n;
+      }
+      var before = vrFillCount();
+      btn.click();
+      if (vrFillCount() === before) return 'skip';
+    },
     switchTab: function(rand){
       tab(['vr','mu','portfolio','pnl'][Math.floor(rand()*4)]);
     }
@@ -383,7 +425,7 @@
   window.__fuzz = function(steps, seed){
     seedSeries();
     var rand = rng(seed);
-    var log = [], failures = [];
+    var log = [], failures = [], perAction = {};
     window.confirm = function(){ return true; };
     window.alert = function(){};
     for (var i=0;i<steps;i++){
@@ -391,9 +433,11 @@
       // 초반엔 만들기 위주로
       if (i < 4) name = (i % 2 === 0) ? 'createVR' : 'createMu';
       var entry = { step: i, action: name };
+      perAction[name] = perAction[name] || { 실행: 0, 건너뜀: 0 };
       try {
         var r = ACTIONS[name](rand);
         entry.skipped = (r === 'skip');
+        perAction[name][entry.skipped ? '건너뜀' : '실행']++;
       } catch(e){
         entry.threw = String(e && e.message || e);
         failures.push({ step: i, action: name, kind: '예외', detail: entry.threw, log: log.slice(-6) });
@@ -412,6 +456,8 @@
       실행: log.filter(function(x){ return !x.skipped && !x.threw; }).length,
       건너뜀: log.filter(function(x){ return x.skipped; }).length,
       실패: failures,
+      // 어떤 조작이 실제로 몇 번 돌았는지 — 늘 건너뛰기만 하는 조작은 검사가 아니다.
+      조작별: perAction,
       콘솔오류: window.__errors.slice()
     };
   };

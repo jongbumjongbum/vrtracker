@@ -95,6 +95,22 @@ var s=document.createElement('script'); s.src='vrclose.js'; document.body.append
 
 `__vrCloseReset()` 로 시세를 심고 새로고침한 뒤, 다시 붙여서 `__vrCloseTest()`.
 
+## 무매 → VR 옮기기 검사 (xfer.js)
+
+VR 화면의 "무매에서 옮겨오기"는 무매에 매도, VR 사이클에 매수를 같은 날 같은
+값으로 한꺼번에 적는다. 무작위 조작으로는 잘 안 나오는 경우 — 체결 없이
+`deltaQty` 만 남은 옛 판본 사이클, 같은 날짜 무매 기록이 둘, 그 뒤 매도 때문에
+못 옮기는 경우, 무매 시작일보다 앞선 사이클, 숫자가 아닌 입력 — 를 정해진
+순서로 밟는다.
+
+```js
+var s=document.createElement('script'); s.src='xfer.js'; document.body.appendChild(s);
+```
+
+`__xferReset()` 으로 상태를 심으면 새로고침되니, 다시 붙인 뒤 `__xferTest()`.
+빈 배열 `[]` 이면 통과다. `fuzz.js` 에도 같은 조작(`transferMuToVr`)이 들어
+있고, 결과의 `조작별` 에서 실제로 몇 번 실행됐는지 볼 수 있다.
+
 ## 기기 간 동기화 검사 (sync.js)
 
 기록을 두 번 날려먹은 자리라 따로 검사를 만들어 뒀어요. **다른 기기에 남아
