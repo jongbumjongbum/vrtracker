@@ -1311,6 +1311,11 @@
                 p.cur.qty = bh.qty; p.cur.avgCost = bh.avgCost;
                 p.cur.realizedPL = bh.realizedPL || 0;
                 p.cur.trades = JSON.parse(JSON.stringify(bh.trades || []));
+                // 기존분도 같이 와야 평단·실현손익이 백업 시점 그대로 다시
+                // 계산된다. 백업이 기존분을 적기 전 판본이면 지워두고,
+                // manualHoldingSeed 가 그 기록에 맞춰 다시 채우게 둔다.
+                p.cur.seedQty = bh.seedQty; p.cur.seedAvgCost = bh.seedAvgCost;
+                p.cur.seedRealizedPL = bh.seedRealizedPL;
                 if (bh.krwSeedCost != null){ p.cur.krwSeedCost = bh.krwSeedCost; p.cur.krwSeedQty = bh.krwSeedQty; }
               } else {
                 state.portfolio.holdings.push(JSON.parse(JSON.stringify(bh)));
@@ -2113,6 +2118,7 @@
     state.portfolio.holdings.forEach(function(h){
       if (h.realizedPL == null) h.realizedPL = 0;
       if (!h.trades) h.trades = [];
+      if (h.seedQty == null) migrateManualSeed(h);
     });
     // 예수금 자동 반영이 생기기 전(2026-08-19)에 적은 무매 체결은 "그외 예수금"
     // 에 안 들어가 있었다. 기록해둔 매매가 예수금에 안 잡히는 상태는 어느
@@ -2222,10 +2228,24 @@
   /* --- 직접입력 종목의 거래 수정/삭제 ---------------------------------------
      qty/avgCost/realizedPL are running values produced by applying trades in
      order, so a trade can't be edited in place — the ones after it would be
-     wrong. Instead: rewind every trade to recover the pre-trade seed, change
-     the list, then replay it forward. Reversal is exact because a buy's effect
-     on the average is invertible and a sell leaves the average untouched. */
+     wrong. Instead: start from 기존분(seed) — 이 앱에 첫 매매를 적기 전의
+     수량·평단·실현손익 — change the list, then replay it forward.
+
+     기존분은 예전 판본처럼 현재 상태에서 거래를 되감아 구하지 않고 그냥 적어
+     둔다. 되감기에는 되살릴 수 없는 구멍이 있었다: 매도로 수량이 0이 되면
+     replayManualHolding 이 평단을 0으로 지우는데(수량이 없으면 평단도 의미가
+     없어서), 되감기는 그 지워진 평단을 알 길이 없다. 그래서 수량이 0까지
+     내려간 종목에 거래를 하나라도 더 기록하면 기존분이 "평단 0원짜리 공짜
+     주식"으로 복원되고, 그 물량을 판 매도의 실현손익이 판 금액 전부로 잡혔다
+     (2026-09-23 SOXL). 적어 두면 그럴 일이 없다. */
   function manualHoldingSeed(h){
+    if (h.seedQty == null) migrateManualSeed(h);
+    return { qty: h.seedQty || 0, avgCost: h.seedAvgCost || 0, realizedPL: h.seedRealizedPL || 0 };
+  }
+  // 기존분을 따로 적기 시작하기 전(2026-09-23)에 만든 기록에는 이 값이 없다.
+  // 옛 되감기로 한 번만 채운다 — 위에 적은 이유로 평단이 0으로 나올 수 있어서,
+  // 화면의 "기존분 평단" 칸에서 직접 고칠 수 있게 해뒀다.
+  function migrateManualSeed(h){
     var qty = h.qty || 0, avg = h.avgCost || 0, realized = h.realizedPL || 0;
     (h.trades || []).slice().reverse().forEach(function(t){
       if (t.type === "buy"){
@@ -2237,7 +2257,19 @@
         realized -= (t.gain || 0);
       }
     });
-    return { qty: qty, avgCost: avg, realizedPL: realized };
+    h.seedQty = round4(Math.max(0, qty));
+    h.seedAvgCost = avg > 0 ? avg : 0;
+    h.seedRealizedPL = round2(realized);
+  }
+  // 기존분을 고치면 팔 수 있었던 수량이 달라져서, 기록해둔 매도가 잘리거나
+  // 도로 풀린다. 그만큼 실제로 오간 돈도 달라지므로 mutateManualTrades 와
+  // 같은 방식으로 예수금을 맞춰 준다.
+  function mutateManualSeed(h, mutate){
+    if (!h.trades) h.trades = [];
+    var before = replayManualHolding(h, manualHoldingSeed(h));
+    mutate(h);
+    var after = replayManualHolding(h, manualHoldingSeed(h));
+    state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + (after - before));
   }
   // 원화 금액은 보기 통화와 상관없이 언제나 원으로 적는다. 실제로 낸 돈이라
   // 달러로 환산해 보여주면 그 숫자가 다시 오늘 환율에 흔들린다.
@@ -4674,7 +4706,8 @@
       // trades/realizedPL 을 여기서 같이 만들어 준다. normalizeState() 가
       // 채워주긴 하지만 그건 전체 render() 때만 돌아서, 종목을 추가한 직후
       // 곧바로 매매를 기록하면 trades 가 없는 채로 걸려 넘어졌다.
-      state.portfolio.holdings.push({ id: newId, ticker: "", qty: 0, avgCost: 0, currentPrice: 0, trades: [], realizedPL: 0 });
+      state.portfolio.holdings.push({ id: newId, ticker: "", qty: 0, avgCost: 0, currentPrice: 0, trades: [], realizedPL: 0,
+        seedQty: 0, seedAvgCost: 0, seedRealizedPL: 0 });
       // A brand-new row is empty, so it has to come up already open — otherwise
       // the user taps 종목 추가 and gets a closed "새 종목" line with nowhere to type.
       openRows["hold:" + newId] = true;
@@ -5687,6 +5720,11 @@
       var realizedPL = h.realizedPL || 0;
       var realizedCls = realizedPL > 0 ? "var(--buy)" : (realizedPL < 0 ? "var(--sell)" : "var(--ink-soft)");
       var kb = computeKrwBasis(h);
+      // 기존분(이 앱에 첫 매매를 적기 전의 물량). 평단이 비어 있는데 그 물량을
+      // 판 기록이 있으면, 그 매도는 "공짜 주식을 판 것"으로 계산돼 있다.
+      var seed = manualHoldingSeed(h);
+      var seedBroken = seed.qty > 0 && !(seed.avgCost > 0) &&
+        (h.trades || []).some(function(t){ return t.type === "sell"; });
       var fxRate = (state.fx && state.fx.usdkrw) ? state.fx.usdkrw : null;
       var hasKrw = kb.krwCost > 0;
       var krwCostCell = hasKrw ? fmtKrw0(kb.krwCost) : '<span class="footnote">–</span>';
@@ -5724,14 +5762,36 @@
         '<td class="num" data-label="실현손익" style="color:' + realizedCls + '">' + fmtCurrency(realizedPL) + '</td>' +
         '<td class="num" data-label="원화 원가">' + krwCostCell + '</td>' +
         '<td class="num" data-label="원화 손익" style="color:' + krwPnlCls + '">' + krwPnlCell + '</td>' +
+        '<td class="num" data-label="기존분 평단">' + (seed.qty > 0
+          ? ('<input type="number" autocomplete="off" inputmode="decimal" step="0.0001" min="0" class="cell-input h-seedcost" value="' + (h.seedAvgCost || "") + '" placeholder="' + seed.qty + '주, 모르면 비움" />' +
+             (seedBroken ? ' <span class="footnote" style="display:inline;color:var(--sell)">비어 있음</span>' : ''))
+          : '<span class="footnote">–</span>') + '</td>' +
         '<td class="num" data-label="기존분 원화원가"><input type="number" autocomplete="off" inputmode="numeric" step="1" min="0" class="cell-input h-krwseed" value="' + (h.krwSeedCost || "") + '" placeholder="모르면 비워두기" /></td>' +
         '<td><button type="button" class="btn btn-sm btn-ghost btn-danger h-del">삭제</button></td>' +
         '</tr>';
     }).join("");
-    host.innerHTML = '<div class="table-wrap"><table class="stack-mobile collapsible-rows"><thead><tr>' +
+    // 기존분 평단이 비어 있는 채로 그 물량을 판 종목은, 그 매도의 실현손익이
+    // 판 금액 전부로 잡혀 있다. 숫자만 보고는 알 수 없어서 표 위에 적어 준다.
+    var broken = holdings.filter(function(h){
+      var s = manualHoldingSeed(h);
+      return s.qty > 0 && !(s.avgCost > 0) &&
+        (h.trades || []).some(function(t){ return t.type === "sell"; });
+    });
+    var brokenNote = broken.length
+      ? ('<div class="card-desc" style="border:1px solid var(--sell);border-radius:8px;padding:10px 12px;margin-bottom:10px;">' +
+         '<b style="color:var(--sell)">실현손익이 실제보다 크게 잡혀 있어요 — ' +
+         broken.map(function(h){ return escapeHtml(h.ticker || "새 종목"); }).join(", ") + '</b><br>' +
+         '이 종목들은 <b>이 앱에 첫 매매를 적기 전부터 갖고 있던 물량</b>의 평단이 비어 있어요. ' +
+         '그래서 그 물량을 판 매도가 "0원에 산 주식을 판 것"으로 계산돼, 판 금액이 통째로 이익이 됐어요.<br>' +
+         '아래 표의 <b>[기존분 평단]</b> 칸에 그때 평단($)을 적으면 매도손익·실현손익이 바로 다시 계산돼요. ' +
+         '평단을 모르겠으면, 빠진 옛 매수기록을 <b>[기록 복구]</b>에서 되살리거나 직접 기록해도 돼요.' +
+         '</div>')
+      : "";
+    host.innerHTML = brokenNote +
+      '<div class="table-wrap"><table class="stack-mobile collapsible-rows"><thead><tr>' +
       '<th>티커</th><th class="num">수량</th><th class="num">매입평균가</th><th class="num">현재가</th>' +
       '<th class="num">평가금</th><th class="num">미실현 수익금</th><th class="num">미실현 수익률</th><th class="num">실현손익</th>' +
-      '<th class="num">원화 원가</th><th class="num">원화 손익</th><th class="num">기존분 원화원가</th><th></th>' +
+      '<th class="num">원화 원가</th><th class="num">원화 손익</th><th class="num">기존분 평단</th><th class="num">기존분 원화원가</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 
     Array.prototype.forEach.call(host.querySelectorAll("tbody tr"), function(tr){
@@ -5753,10 +5813,42 @@
             "단순 입력 실수 정정이면 [확인]을 누르세요.";
           if (!confirm(msg)){ this.value = oldQty; return; }
         }
-        h.qty = newQty;
+        // 수량은 기존분 + 기록된 매매로 다시 계산되는 값이라, 여기에 그냥
+        // 대입하면 다음에 거래를 하나 적는 순간 도로 사라진다. 기존분을
+        // 그만큼 움직여서, 다시 계산해도 이 수량이 나오게 한다.
+        mutateManualSeed(h, function(){
+          h.seedQty = round4(Math.max(0, (h.seedQty || 0) + (newQty - oldQty)));
+        });
+        if (Math.abs((h.qty||0) - newQty) > 1e-6){
+          alert("기록해둔 매수분까지 줄일 수는 없어서 " + h.qty + "주가 됐어요.\n\n" +
+            "더 줄이려면 아래 매매기록에서 해당 매수를 고치거나 지워주세요.");
+        }
         commit();
       });
-      tr.querySelector(".h-cost").addEventListener("change", function(){ h.avgCost = parseFloat(this.value)||0; commit(); });
+      // 평단도 기존분 평단 + 기록된 매수로 계산되는 값이다. 매매기록이 있으면
+      // 여기서 정한 값은 다음 재계산에 덮여 사라지니, 기존분 평단 칸으로 보낸다.
+      tr.querySelector(".h-cost").addEventListener("change", function(){
+        var v = parseFloat(this.value) || 0;
+        if ((h.trades || []).length){
+          alert("이 종목은 매매기록이 있어서 평단이 자동으로 계산돼요.\n\n" +
+            "기록을 넣기 전부터 갖고 있던 물량의 평단을 고치려면 표 오른쪽 " +
+            "[기존분 평단] 칸에 적어주세요.");
+          this.value = h.avgCost;
+          return;
+        }
+        mutateManualSeed(h, function(){ h.seedAvgCost = v < 0 ? 0 : v; });
+        commit();
+      });
+      // 이 앱에 첫 매매를 적기 전부터 갖고 있던 물량의 평단. 이 값이 비어 있으면
+      // 그 물량을 판 매도가 판 금액 전부를 이익으로 잡는다.
+      var seedCostInput = tr.querySelector(".h-seedcost");
+      if (seedCostInput){
+        seedCostInput.addEventListener("change", function(){
+          var v = parseFloat(this.value);
+          mutateManualSeed(h, function(){ h.seedAvgCost = (isNaN(v) || v < 0) ? 0 : v; });
+          commit();
+        });
+      }
       // 이 앱에 매수 기록을 넣기 전부터 갖고 있던 물량에 들어간 원화.
       // 대응 수량은 사용자가 따로 적지 않고, 거래 기록을 되감은 출발 수량을
       // 그대로 쓴다 — 그 수량이 곧 "기록 없이 쌓여 있던 물량"이다.
