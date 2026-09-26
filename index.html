@@ -3253,7 +3253,7 @@
         '<h3 style="margin-top:22px;">③ 사이클 마감 정보</h3>' +
         '<div class="card-desc">이 사이클을 마감하고 다음 사이클을 여는 정보예요. 저장하면 다음 사이클의 V·매수가·매도가가 새로 계산돼요.</div>' +
         '<div class="form-grid" style="grid-template-columns:1fr 1fr;">' +
-          field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기로 자동 제안돼요</span>', '<input id="cy_date" type="date" autocomplete="off" value="' + suggestedDate(inst) + '" />') +
+          field('다음 사이클 시작 날짜 <span class="hint">' + inst.cycleDays + '일 주기, 토요일 마감으로 자동 제안돼요</span>', '<input id="cy_date" type="date" autocomplete="off" value="' + suggestedDate(inst) + '" />') +
           field('마감일 ' + escapeHtml(inst.ticker) + ' 종가 ($) <span class="hint">그 날 종가를 자동으로 받아와요 — 평가금(E) 계산에 쓰여요</span>', '<input id="cy_close" type="number" readonly tabindex="-1" />') +
         '</div>' +
         '<div class="form-grid" style="margin-top:14px;">' +
@@ -3466,7 +3466,7 @@
       var sigTxt = res.signal === "buy" ? "매수 신호" : (res.signal === "sell" ? "매도 신호" : "홀드");
       box.innerHTML =
         '<span class="signal-badge ' + sigCls + '"><span class="dot"></span>' + sigTxt + '</span>' +
-        '<span>다음 사이클 시작 예정 <b>' + fmtDate(addDaysStr(date, inst.cycleDays)) + '</b></span>' +
+        '<span>다음 사이클 시작 예정 <b>' + fmtDate(cycleEndStr(date, inst.cycleDays)) + '</b></span>' +
         '<span>사이클 종료 후 보유수량 <b>' + res.qty + '주</b></span>' +
         '<span>다음 V <b>' + fmtMoney0(res.Vnext) + '</b></span>' +
         '<span>다음 매수 밴드 <b>' + fmtMoney0(res.buyBandNext) + '</b></span>' +
@@ -4817,6 +4817,8 @@
     // (그 날 봉이 나오면 lastDate 가 넘어가면서 아래 일반 경로로 풀린다 —
     //  평일 휴장일도 하루 지나면 그렇게 저절로 풀린다).
     if (dateStr > lastDate && !isWeekend(dateStr)) return null;
+    // 토요일 마감인데 금요일 봉이 아직 안 받아졌으면 목요일 종가로 채우면 안 된다.
+    if (dateStr > lastDate && lastDate < addDaysStr(dateStr, new Date(dateStr + "T00:00:00").getDay() === 6 ? -1 : -2)) return null;
     for (var i = rows.length - 1; i >= 0; i--){
       if (rows[i].date <= dateStr) return rows[i].close;
     }
@@ -5913,7 +5915,7 @@
   // across two fields reads as two separate cycles.
   function currentCycleWindow(inst, last){
     var start = (last && last.date) ? last.date : inst.initDate;
-    return { start: start, end: addDaysStr(start, inst.cycleDays) };
+    return { start: start, end: cycleEndStr(start, inst.cycleDays) };
   }
   // 지금 돌고 있는 사이클의 마감일까지 남은 날짜. 0이면 오늘이 마감일,
   // 음수면 지났다는 뜻이다. 날짜 문자열끼리만 비교하므로 시분초는 안 섞인다.
@@ -5959,11 +5961,18 @@
     var d = new Date(new Date(dateStr).getTime() + days*86400000);
     return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
   }
+  // 사이클 마감은 토요일이다 — 미국장이 금요일에 닫히니 토요일이면 그 주
+  // 종가가 다 나와 있다. 주기만큼 더한 날에서 가장 가까운 토요일로 맞춘다
+  // (예전 일요일 마감 기록 → 하루 앞 토요일, 한 번 토요일이 되면 14일 주기는
+  //  계속 토요일이다).
+  function cycleEndStr(startStr, days){
+    var end = addDaysStr(startStr, days);
+    var toSat = (6 - new Date(end + "T00:00:00").getDay() + 7) % 7;
+    return addDaysStr(end, toSat > 3 ? toSat - 7 : toSat);
+  }
   function suggestedDate(inst){
     var last = inst.cycles.length ? inst.cycles[inst.cycles.length-1] : null;
-    var base = last ? new Date(last.date) : new Date(inst.initDate);
-    var d = new Date(base.getTime() + inst.cycleDays*86400000);
-    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+    return cycleEndStr(last ? last.date : inst.initDate, inst.cycleDays);
   }
 
   function stat(label, value, isPlain, color){
@@ -6542,7 +6551,7 @@
         : "–";
       return '<tr data-cycle-id="' + c.id + '">' +
         '<td data-label="사이클 시작일">' + fmtDate(c.date) + '</td>' +
-        '<td data-label="다음 사이클 시작 예정"><span class="footnote" style="display:inline;">' + fmtDate(addDaysStr(c.date, inst.cycleDays)) + '</span></td>' +
+        '<td data-label="다음 사이클 시작 예정"><span class="footnote" style="display:inline;">' + fmtDate(cycleEndStr(c.date, inst.cycleDays)) + '</span></td>' +
         '<td data-label="신호"><span class="signal-badge ' + sigCls + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + sigTxt + '</span></td>' +
         '<td data-label="체결내역">' + fillsTxt + '</td>' +
         '<td class="num" data-label="종가">' + fmtMoney(c.price) + '</td>' +

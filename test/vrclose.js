@@ -92,6 +92,24 @@
     if ($('cy_close').value !== '101') bad.push('일요일에 직전 거래일(101) 이 아님: ' + $('cy_close').value);
   };
 
+  // 받아온 범위 밖의 토요일인데 그 주 금요일 봉이 없으면 지난 종가로 채우면 안 된다.
+  // (9/26 토, 마지막 봉 9/21 월)
+  CASES.saturdayNeedsFridayBar = function(bad){
+    set('cy_date', '2026-09-26');
+    if ($('cy_close').value !== '') bad.push('금요일 봉 없이 토요일 종가가 채워짐: ' + $('cy_close').value);
+    if (!$('cy_submit').disabled) bad.push('금요일 봉이 없는데 마감 버튼이 안 잠김');
+  };
+
+  // 마감일은 토요일로 제안된다 (시작 9/1 화 + 14일 → 가장 가까운 토요일 9/12).
+  CASES.suggestsSaturday = function(bad){
+    tab('vr');
+    var cards = document.querySelectorAll('.instance-card');
+    for (var i=0;i<cards.length;i++){
+      if (cards[i].textContent.indexOf('자동종가') === 0){ cards[i].click(); break; }
+    }
+    if ($('cy_date').value !== '2026-09-12') bad.push('제안 마감일이 9/12(토)가 아님: ' + $('cy_date').value);
+  };
+
   // 종가 칸은 손으로 못 고친다 — 정해진 값이라 적을 일이 없다.
   CASES.closeFieldsAreReadonly = function(bad){
     ['cy_close','cy_spy','cy_qqq'].forEach(function(id){
