@@ -3510,7 +3510,15 @@
       }
       if (submitBtn) submitBtn.disabled = missing.length > 0;
       updatePreview();
+      // 받아 둔 시세는 12시간 재사용한다. 금요일 낮(한국)에 받아 둔 게 남아
+      // 있으면 토요일 아침에도 금요일 봉이 없다 — 그럴 땐 한 번 새로 받는다.
+      missing.forEach(function(sym){
+        if (refetchedSyms[sym]) return;
+        refetchedSyms[sym] = true;
+        fetchTimeSeries(sym, true).then(function(ok){ if (ok) autofillCloses(); });
+      });
     }
+    var refetchedSyms = {};
     autoCloseFields.forEach(function(p){ ensureSeries(String(p[1]).toUpperCase(), true, autofillCloses); });
     dateEl.addEventListener("input", autofillCloses);
     autofillCloses();
