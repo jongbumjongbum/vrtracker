@@ -89,6 +89,8 @@
           getSession: function(){ return Promise.resolve({ data: { session: session } }); },
           onAuthStateChange: function(cb){ listeners.push(cb); return { data: { subscription: {} } }; },
           signInWithPassword: function(){ session = { user: USER }; listeners.forEach(function(cb){ cb("SIGNED_IN", session); }); return Promise.resolve({ data: { session: session }, error: null }); },
+          resetPasswordForEmail: function(email){ log("resetPasswordForEmail", email); return Promise.resolve({ data: {}, error: null }); },
+          updateUser: function(attrs){ log("updateUser", attrs.password ? "password" : ""); window.__pwUpdated = true; return Promise.resolve({ data: { user: USER }, error: null }); },
           signUp: function(){ return Promise.resolve({ data: { session: null }, error: null }); },
           signOut: function(){ session = null; listeners.forEach(function(cb){ cb("SIGNED_OUT", null); }); return Promise.resolve({}); }
         }

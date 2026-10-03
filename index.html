@@ -518,6 +518,10 @@
   }
   .auth-tab.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
   .auth-msg { font-size: 12.5px; color: var(--ink-soft); min-height: 16px; }
+  .auth-link {
+    border: none; background: none; color: var(--muted); font-size: 12.5px;
+    cursor: pointer; text-decoration: underline; padding: 0; align-self: center;
+  }
   .user-badge {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px;
@@ -796,6 +800,20 @@
     <div class="field"><label>비밀번호</label><input id="auth_password" type="password" autocomplete="current-password" /></div>
     <div class="auth-msg" id="authMsg"></div>
     <button class="btn btn-primary btn-block" id="authSubmit" type="button">로그인</button>
+    <button class="auth-link" id="authForgot" type="button">비밀번호를 잊으셨나요?</button>
+  </div>
+</div>
+
+<div class="auth-gate hidden" id="resetGate">
+  <div class="auth-box">
+    <div>
+      <h1>새 비밀번호</h1>
+      <div class="tag">앞으로 로그인할 때 쓸 비밀번호를 정해주세요.</div>
+    </div>
+    <div class="field"><label>새 비밀번호</label><input id="reset_password" type="password" autocomplete="new-password" /></div>
+    <div class="field"><label>한 번 더</label><input id="reset_password2" type="password" autocomplete="new-password" /></div>
+    <div class="auth-msg" id="resetMsg"></div>
+    <button class="btn btn-primary btn-block" id="resetSubmit" type="button">비밀번호 바꾸기</button>
   </div>
 </div>
 
@@ -848,6 +866,12 @@
   // the page back to the top. Once we're up for a user, later events for that
   // same user are no-ops.
   var appReady = false;
+  // 재설정 메일의 링크로 들어오면 그 자체로 로그인된 상태가 되는데, 그대로 앱을
+  // 띄우면 새 비밀번호를 정할 기회가 없다. 라이브러리가 주소의 #... 를 지우기 전에
+  // 미리 읽어 둔다. 링크가 만료됐으면 #error=... 로 들어온다.
+  var recoveryMode = /type=recovery/.test(location.hash);
+  var recoveryLinkError = /error_code=otp_expired/.test(location.hash)
+    ? "재설정 링크가 만료됐어요. 아래에서 메일을 다시 받아주세요." : "";
   var sb = (window.supabase && window.supabase.createClient)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
@@ -1150,6 +1174,12 @@
       }
     });
   }
+  function showResetGate(){
+    document.getElementById("authGate").classList.add("hidden");
+    document.getElementById("pendingGate").classList.add("hidden");
+    document.getElementById("appRoot").classList.add("hidden");
+    document.getElementById("resetGate").classList.remove("hidden");
+  }
   function hideAuthGate(){
     document.getElementById("authGate").classList.add("hidden");
     document.getElementById("pendingGate").classList.add("hidden");
@@ -1448,6 +1478,7 @@
   var authBooting = null;
   async function onAuthChange(session){
     var uid = session && session.user ? session.user.id : null;
+    if (recoveryMode && uid){ showResetGate(); return; }
     if (uid && appReady && uid === currentUserId) return;
     if (uid && authBooting === uid) return;
     authBooting = uid;
@@ -1577,6 +1608,43 @@
     document.getElementById("logoutBtn").addEventListener("click", async function(){
       if (sb) await sb.auth.signOut();
     });
+
+    var forgotBtn = document.getElementById("authForgot");
+    forgotBtn.addEventListener("click", async function(){
+      if (!sb){ setAuthMsg("연결에 문제가 있어요. 잠시 후 새로고침해주세요.", true); return; }
+      var email = document.getElementById("auth_email").value.trim();
+      if (!email){ setAuthMsg("위 이메일 칸에 가입한 이메일을 적고 다시 눌러주세요.", true); return; }
+      forgotBtn.disabled = true;
+      setAuthMsg("보내는 중...");
+      var r = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      forgotBtn.disabled = false;
+      if (r.error){ setAuthMsg(r.error.message, true); return; }
+      setAuthMsg("재설정 메일을 보냈어요. 메일의 링크를 누르면 새 비밀번호를 정할 수 있어요.");
+    });
+
+    var resetBtn = document.getElementById("resetSubmit");
+    resetBtn.addEventListener("click", async function(){
+      var msg = document.getElementById("resetMsg");
+      var p1 = document.getElementById("reset_password").value;
+      var p2 = document.getElementById("reset_password2").value;
+      msg.style.color = "var(--sell)";
+      if (!p1){ msg.textContent = "새 비밀번호를 입력해주세요."; return; }
+      if (p1 !== p2){ msg.textContent = "두 칸의 비밀번호가 달라요."; return; }
+      resetBtn.disabled = true;
+      msg.style.color = "var(--ink-soft)";
+      msg.textContent = "바꾸는 중...";
+      var r = await sb.auth.updateUser({ password: p1 });
+      resetBtn.disabled = false;
+      if (r.error){ msg.style.color = "var(--sell)"; msg.textContent = r.error.message; return; }
+      recoveryMode = false;
+      // 앱 화면에 type="password" 칸이 남아 있으면 iOS 가 엉뚱한 칸에 자동완성을
+      // 띄우므로(setAuthInputsEnabled 참고) 다 쓴 화면은 통째로 걷어낸다.
+      var gate = document.getElementById("resetGate");
+      gate.parentNode.removeChild(gate);
+      var s = await sb.auth.getSession();
+      onAuthChange(s.data.session);
+    });
+    if (recoveryLinkError) setAuthMsg(recoveryLinkError, true);
   }
 
   /* ---------------- domain logic ---------------- */
@@ -7550,7 +7618,10 @@
   wireApprovalUI();
   wireRecoverUI();
   if (sb){
-    sb.auth.onAuthStateChange(function(_event, session){ onAuthChange(session); });
+    sb.auth.onAuthStateChange(function(event, session){
+      if (event === "PASSWORD_RECOVERY") recoveryMode = true;
+      onAuthChange(session);
+    });
     sb.auth.getSession().then(function(res){ onAuthChange(res.data.session); });
   } else {
     setAuthMsg("연결에 문제가 있어요. 잠시 후 새로고침해주세요.", true);
