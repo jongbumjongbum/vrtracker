@@ -13,6 +13,8 @@ fetch('../index.html?v=' + Date.now())
       '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"><\/script>',
       '<script src="stub.js"><\/script>'
     );
+    // 이 페이지는 test/ 안에 있어서 상대경로가 한 칸 어긋난다.
+    html = html.replace('<script src="calc.js"><\/script>', '<script src="../calc.js"><\/script>');
     html = html.replace(
       'if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){',
       'if (false){'

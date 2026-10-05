@@ -3,13 +3,14 @@
    저장된 기록은 볼 수 있게 한다. 새 판을 올렸을 때 옛 화면이 계속 뜨면 안 되니
    페이지 자체는 항상 인터넷을 먼저 보고, 실패했을 때만 캐시를 쓴다. */
 
-var VERSION = "v3";
+var VERSION = "v4";
 var CACHE = "vrtracker-" + VERSION;
 
 // 앱 껍데기. 로그인 라이브러리는 다른 도메인이지만 CORS가 열려 있어 같이 담긴다.
 var SHELL = [
   "./",
   "./index.html",
+  "./calc.js",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
@@ -69,6 +70,21 @@ self.addEventListener("fetch", function(ev){
           return hit || caches.match("./");
         });
       })
+    );
+    return;
+  }
+
+  // 계산 모듈은 페이지와 판이 맞아야 한다. 캐시 우선으로 두면 새 페이지가
+  // 옛 calc.js 와 붙어서 없는 함수를 부르다 화면이 안 뜰 수 있다.
+  if (url.origin === self.location.origin && url.pathname.slice(-8) === "/calc.js"){
+    ev.respondWith(
+      fetch(new Request(req.url, { cache: "reload", credentials: "same-origin" })).then(function(res){
+        if (res && res.status === 200){
+          var copy = res.clone();
+          caches.open(CACHE).then(function(c){ c.put("./calc.js", copy); });
+        }
+        return res;
+      }).catch(function(){ return caches.match("./calc.js"); })
     );
     return;
   }
