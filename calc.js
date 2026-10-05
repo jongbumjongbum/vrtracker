@@ -522,10 +522,13 @@ function computeMuDay(inst, prev, input){
   // 원금으로 되돌린다. 남거나 모자란 돈은 이미 '그외 예수금'에 잡혀 있어 옮길 필요가 없다.
   var seasonStart = prev.seasonStart || inst.startDate || input.date;
   var seasonReset = null;
-  if (qty === 0 && prev.qty > 0 && inst.principal > 0 &&
+  // 되돌릴 원금은 원장이 직접 정한 '다음 시즌 원금'(없으면 처음 원금). 이미 리셋한 날을 다시
+  // 계산할 땐 그날 썼던 금액을 그대로 쓴다 — 나중에 값을 바꿔도 지난 시즌이 흔들리지 않게.
+  var resetTo = input.seasonPrincipal || inst.seasonPrincipal || inst.principal;
+  if (qty === 0 && prev.qty > 0 && resetTo > 0 &&
       String(input.date).slice(0, 4) > String(seasonStart).slice(0, 4)){
-    seasonReset = { cashBefore: round2(cash), principal: inst.principal };
-    cash = inst.principal;
+    seasonReset = { cashBefore: round2(cash), principal: resetTo };
+    cash = resetTo;
     seasonStart = input.date;
   }
 
@@ -577,7 +580,8 @@ function replayMuDays(inst){
       // 그날 사용자가 T를 직접 지정했으면 그 값을, 아니면 체결에서 다시
       // 계산한다. 어느 쪽인지는 migrateMuDayInputs 가 미리 표시해둔다.
       tOverride: (d.v === 2) ? d.tOverride : ((typeof d.T === "number") ? d.T : null),
-      exhausted: (d.v === 2) ? !!d.exhausted : !!d.reverseFirstDay
+      exhausted: (d.v === 2) ? !!d.exhausted : !!d.reverseFirstDay,
+      seasonPrincipal: d.seasonReset ? d.seasonReset.principal : null
     });
     res.id = d.id;
     res.v = d.v;

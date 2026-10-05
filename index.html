@@ -3524,12 +3524,15 @@
     var totalAsset = round2(evalNow + (last.cash||0));
     // 잔금 already carries every realized gain/loss, so 총자산 − 원금 is the
     // whole strategy's return to date (실현 + 미실현) measured against the seed.
-    var seedReturn = round2(totalAsset - (inst.principal||0));
-    var seedReturnPct = inst.principal > 0 ? (seedReturn/inst.principal*100) : null;
+    // 시즌이 리셋됐으면 그 시즌 원금이 지금의 시드다.
+    var lastReset = inst.days.slice().reverse().find(function(d){ return d.seasonReset; });
+    var seed = lastReset ? lastReset.seasonReset.principal : (inst.principal || 0);
+    var seedReturn = round2(totalAsset - seed);
+    var seedReturnPct = seed > 0 ? (seedReturn/seed*100) : null;
     // 잔금 already nets out sells, so 원금−잔금 is what's currently deployed
     // into stock — the reading that matters day to day ("시드를 얼마나 썼나").
-    var usedSeed = round2(inst.principal - (last.cash||0));
-    var usedSeedPct = inst.principal > 0 ? (usedSeed/inst.principal*100) : null;
+    var usedSeed = round2(seed - (last.cash||0));
+    var usedSeedPct = seed > 0 ? (usedSeed/seed*100) : null;
     var modeLabel = last.mode === "reverse" ? ("리버스모드" + (last.reverseFirstDay ? " (전환 첫날)" : "")) : ("일반모드 · " + (last.half === "back" ? "후반전" : "전반전"));
     function muPnlColor(p){ return p > 0 ? "var(--buy)" : (p < 0 ? "var(--sell)" : undefined); }
 
@@ -3538,7 +3541,10 @@
     stats.innerHTML =
       stat("모드", modeLabel, true) +
       stat("진행률 (T/분할)", (Math.round(last.T*100)/100) + " / " + inst.splitCount + " (" + progress.toFixed(1) + "%)", true) +
-      stat("시드 (원금)", fmtMoney0(inst.principal)) +
+      stat("시드 (원금)" + (lastReset ? ' <span class="hint">' + fmtDate(lastReset.date) + ' 시즌 리셋</span>' : ''), fmtMoney0(seed)) +
+      '<div class="stat"><div class="label">다음 시즌 원금 <span class="hint">해가 바뀐 뒤 사이클이 끝나는 날 잔금을 이 금액으로 되돌려요 · 비우면 처음 원금</span></div>' +
+        '<input id="muSeasonPrincipalInput" type="number" autocomplete="off" inputmode="decimal" step="0.01" class="cell-input" style="width:100%;" ' +
+        'value="' + (inst.seasonPrincipal > 0 ? inst.seasonPrincipal : "") + '" placeholder="' + fmtMoney0(inst.principal) + '" /></div>' +
       stat("사용한 시드 (원금−잔금)", fmtMoney0(usedSeed) + (usedSeedPct!=null ? (" (" + usedSeedPct.toFixed(1) + "%)") : "")) +
       stat("잔금", fmtMoney0(last.cash||0)) +
       stat("평단", last.avgCost>0 ? fmtMoney(last.avgCost) : "–") +
@@ -3553,6 +3559,12 @@
         false, muPnlColor(seedReturn)) +
       stat('실현손익 <span class="hint">이 무매에 기록한 매도만 · 손익 탭에 직접 적은 과거분 제외</span>', fmtMoney0(last.realizedPL||0), false, muPnlColor(last.realizedPL||0));
     mainArea.appendChild(stats);
+    document.getElementById("muSeasonPrincipalInput").addEventListener("change", function(){
+      var v = parseFloat(this.value);
+      inst.seasonPrincipal = (v > 0) ? v : null;
+      saveState();
+      render();
+    });
 
     var plan = muOrderPlan(inst, last, getLivePrice(inst.ticker));
     var planCard = document.createElement("div");
