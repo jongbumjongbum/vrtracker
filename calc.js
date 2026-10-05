@@ -8,9 +8,10 @@ function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toStr
 
 /* ---------------- domain logic ---------------- */
 var TYPE_DEFAULTS = {
-  "적립식": { startG: 10, gStepDays: 365, poolBase: 75, poolStepPct: 5, poolStepDays: 182.5, poolFloor: 10 },
-  "거치식": { startG: 10, gStepDays: 182.5, poolBase: 75, poolStepPct: 5, poolStepDays: 182.5, poolFloor: 10 },
-  "인출식": { startG: 40, gStepDays: 182.5, buyLimitPct: 10 }
+  // 매수한도 시간표는 defaultPoolLimitConfig 에 있다.
+  "적립식": { startG: 10, gStepDays: 365 },
+  "거치식": { startG: 10, gStepDays: 182.5 },
+  "인출식": { startG: 40, gStepDays: 182.5 }
 };
 
 function currentSegment(inst, atDate){
@@ -65,9 +66,14 @@ function nextGIncrease(inst, atDate){
 // The Pool buy-limit ratio is user-editable (both at creation and later),
 // so this is only the fallback shown/pre-filled when an instance hasn't
 // customized it yet.
+// 라오어 VR 중계표 '매수제한/매수한도' (VR0~7 282편, 2026-10-05):
+//   시작 후 1년은 제한 없음 → 75% → 26주(반년)마다 −5% → 25% 에서 멈춤.
+//   VR4 53주 75·79주 70·105주 65, VR2 135주 60·157주 55·185주 50·209주 45, VR0 1년 반 내내 25.
+//   적립식→거치식으로 바뀌어도(VR2) 시간표는 VR 처음 시작일 기준으로 이어진다. 인출식(VR5)은 10% 고정.
+// startDelayDays 가 없는 예전 설정은 예전처럼(현재 구간 시작일부터, 지연 없음) 계산한다.
 function defaultPoolLimitConfig(type){
-  if (type === "인출식") return { mode: "fixed", fixedPct: 10, basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 10 };
-  return { mode: "schedule", basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 10, fixedPct: 10 };
+  if (type === "인출식") return { mode: "fixed", fixedPct: 10, basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 25, startDelayDays: 365 };
+  return { mode: "schedule", basePct: 75, stepPct: 5, stepDays: 182.5, floorPct: 25, startDelayDays: 365, fixedPct: 10 };
 }
 
 function currentPoolLimit(inst, atDate){
@@ -76,8 +82,11 @@ function currentPoolLimit(inst, atDate){
   if (cfg.mode === "fixed"){
     return { buyPct: cfg.fixedPct, sellPct: null };
   }
-  var days = Math.max(0, daysBetween(seg.startDate, atDate));
-  var steps = Math.floor(days / cfg.stepDays);
+  var delay = cfg.startDelayDays || 0;
+  var from = delay ? inst.typeSegments[0].startDate : seg.startDate;
+  var days = Math.max(0, daysBetween(from, atDate));
+  if (days < delay) return { buyPct: 100, sellPct: null };
+  var steps = Math.floor((days - delay) / cfg.stepDays);
   var pct = Math.max(cfg.floorPct, cfg.basePct - steps*cfg.stepPct);
   return { buyPct: pct, sellPct: null };
 }
@@ -117,14 +126,19 @@ function computeCycle(inst, prevCycleOrInit, input){
   var tradeCash = sellProceeds - buyCost;
   var qtyEnd = Qprev + deltaQty;
   var E = round2(qtyEnd * input.closePrice);
-  var raw = Vprev + (Poolprev / G) + ((E - Vprev) / (2 * Math.sqrt(G)));
   // 배당금은 적립(deposit)과 달리 "그외 예수금"에서 옮겨온 돈이 아니라 이
   // VR 안에서 새로 생긴 돈이라, depositApplied 로 세지 않는다 (그래서
-  // vrAppliedDeposits/그외 예수금 정산에서 빠진다) — 그래도 Pool·V 에는
-  // 적립과 똑같이 반영돼야 실제로 쓸 수 있는 현금이자 총자산이 된다.
+  // vrAppliedDeposits/그외 예수금 정산에서 빠진다).
+  // 라오어 중계표 장부 순서 (VR0~7 282편 검산, 2026-10-05):
+  //   마지막 Pool = 처음 Pool + 총매매액 + 배당          ← V 식에 이 값이 들어간다
+  //   다음 V     = 직전V + 마지막Pool/G + (E-직전V)/(2√G) + 적립(인출이면 음수)
+  //   다음 Pool  = 마지막 Pool + 적립
+  // 배당은 Pool 을 거쳐서만 V 에 반영되고, V 에 따로 더하지 않는다.
   var dividend = Number(input.dividend || 0);
-  var Vnext = round2(raw) + Number(input.deposit || 0) + dividend;
-  var Pool = round2(Poolprev + Number(input.deposit || 0) + tradeCash + dividend);
+  var lastPool = Poolprev + tradeCash + dividend;
+  var raw = Vprev + (lastPool / G) + ((E - Vprev) / (2 * Math.sqrt(G)));
+  var Vnext = round2(raw) + Number(input.deposit || 0);
+  var Pool = round2(lastPool + Number(input.deposit || 0));
   var band = inst.band || {low:0.85, high:1.15};
   var buyBandPrev = round2(Vprev * band.low);
   var sellBandPrev = round2(Vprev * band.high);
@@ -263,26 +277,31 @@ function legacyFillsFromCycle(c){
   if (!dq) return [];
   return [{ type: dq > 0 ? "buy" : "sell", qty: Math.abs(dq), price: c.price }];
 }
+// avgCost = 증권사 방식(이동평균: 팔아도 평단 그대로), laorAvgCost = 라오어 '실효평단'
+// = (매수금 − 매도금) ÷ 보유개수 (VR 중계표 '현 계좌 상황', 2025-09 VR2 155주차 등).
 function computeEffectiveCostBasis(inst){
   var qty = inst.initQty || 0;
   var cost = qty * (inst.initPrice || 0);
+  var net = cost;
   var realizedPL = 0;
   inst.cycles.forEach(function(c){
     var fills = (c.fills && c.fills.length) ? c.fills : legacyFillsFromCycle(c);
     fills.forEach(function(f){
       if (f.type === "buy"){
         cost += f.qty * f.price;
+        net += f.qty * f.price;
         qty += f.qty;
       } else if (qty > 0){
         var avg = cost / qty;
         var sellQty = Math.min(f.qty, qty);
         realizedPL += sellQty * (f.price - avg);
+        net -= sellQty * f.price;
         qty -= sellQty;
         cost = avg * Math.max(0, qty);
       }
     });
   });
-  return { qty: qty, avgCost: qty > 0 ? cost/qty : 0, realizedPL: realizedPL };
+  return { qty: qty, avgCost: qty > 0 ? cost/qty : 0, laorAvgCost: qty > 0 ? net/qty : 0, realizedPL: realizedPL };
 }
 
 var DEFAULT_TRANCHE_SIZE = 1; // base unit is always "1개씩" — the account owner personally scales it (e.g. "2배", "5배") to fit their own capital size, so this is a per-VR setting, not a derivable formula
@@ -402,7 +421,7 @@ function muInstanceInit(inst){
     T: T, qty: qty, avgCost: avg,
     cash: round2((inst.principal || 0) - used),
     mode: "general", half: muHalf(T, inst.splitCount),
-    realizedPL: 0, close: null, reverseFirstDay: false
+    realizedPL: 0, close: null, reverseFirstDay: false, seasonStart: inst.startDate
   };
 }
 // How many rounds' worth of the seed a mid-entry position represents:
@@ -438,11 +457,19 @@ function muDeriveT(inst, prev, fills){
     else buyCost += f.qty * f.price;
   });
   var T = prev.T, why = [];
+  // 라오어 표의 T 는 실제로 판 비율이 아니라 어느 매도가 체결됐느냐로 정해진다
+  // (쿼터매도만 있던 164일 중 146일 ×0.75, 실제 비율과 맞는 날 1일 / 리버스 매도는 늘 ×(1−2/분할)).
+  //   전량 매도 → 0, 지정가(평단×1.15|1.20) 체결 → ×0.25(남은 1/4), ★ 쿼터매도 → ×0.75
   if (sellQty > 0 && prev.qty > 0){
-    var soldRatio = Math.min(1, sellQty / prev.qty);
-    var keepRatio = 1 - soldRatio;
+    var keepRatio, kind;
+    var limitPrice = prev.avgCost * (1 + (MU_BASE_PCT[inst.ticker] || 15) / 100);
+    var hitLimit = (fills || []).some(function(f){ return f.type === "sell" && f.price >= limitPrice - 0.01; });
+    if (sellQty >= prev.qty){ keepRatio = 0; kind = "전량 매도"; }
+    else if (prev.mode === "reverse"){ keepRatio = 1 - muReverseSellFraction(a); kind = "리버스 매도"; }
+    else if (hitLimit){ keepRatio = 0.25; kind = "지정가 매도"; }
+    else { keepRatio = 0.75; kind = "쿼터매도"; }
     T = T * keepRatio;
-    why.push("매도 " + sellQty + "주 (보유 " + prev.qty + "주의 " + (soldRatio*100).toFixed(1) + "%) → T×" + keepRatio.toFixed(4).replace(/0+$/,"").replace(/\.$/,""));
+    why.push(kind + " " + sellQty + "주 → T×" + keepRatio);
   }
   if (buyCost > 0){
     if (prev.mode === "reverse"){
@@ -451,10 +478,13 @@ function muDeriveT(inst, prev, fills){
       T = T + add;
       why.push("쿼터매수 " + fmtMoney0(buyCost) + " (잔금의 " + (f*100).toFixed(1) + "%) → T +" + add.toFixed(2));
     } else {
+      // 라오어 표의 T 는 체결 금액 비율이 아니라 체결된 줄 수로 센다 (무매 전반전 734일 중 733일):
+      // 전반전에 체결가가 모두 평단보다 위 = ★줄만 체결 → +0.5, 그 외(평단줄까지·후반전·첫매수) +1.
       var daily = muDailyBuyAmount(prev.cash, a, prev.T);
-      var ratio = daily > 0 ? (buyCost / daily) : 0;
-      T = T + ratio;
-      why.push("매수 " + fmtMoney0(buyCost) + " / 1회매수금 " + fmtMoney0(daily) + " → T +" + ratio.toFixed(2));
+      var starOnly = (fills || []).every(function(f){ return f.type === "sell" || f.price > prev.avgCost; });
+      var add = (prev.qty > 0 && muHalf(prev.T, a) === "front" && starOnly) ? 0.5 : 1;
+      T = T + add;
+      why.push("매수 " + fmtMoney0(buyCost) + " / 1회매수금 " + fmtMoney0(daily) + (add === 0.5 ? " (★줄만 체결)" : "") + " → T +" + add);
     }
   }
   if (!why.length) why.push("체결 없음 → T 그대로");
@@ -487,6 +517,17 @@ function computeMuDay(inst, prev, input){
   });
   var avgCost = qty > 0 ? cost/qty : 0;
   var cash = prev.cash - buyCost + sellProceeds;
+  // 시즌 리셋 (원장 결정 2026-10-05: 라오어처럼 '1년 근처'가 아니라 연도가 바뀌면).
+  // 주식을 들고는 리셋할 수 없으니, 해가 바뀐 뒤 처음 사이클이 끝나는 날(보유 0주) 잔금을
+  // 원금으로 되돌린다. 남거나 모자란 돈은 이미 '그외 예수금'에 잡혀 있어 옮길 필요가 없다.
+  var seasonStart = prev.seasonStart || inst.startDate || input.date;
+  var seasonReset = null;
+  if (qty === 0 && prev.qty > 0 && inst.principal > 0 &&
+      String(input.date).slice(0, 4) > String(seasonStart).slice(0, 4)){
+    seasonReset = { cashBefore: round2(cash), principal: inst.principal };
+    cash = inst.principal;
+    seasonStart = input.date;
+  }
 
   var a = inst.splitCount;
   var mode = prev.mode, half = prev.half, reverseFirstDay = false;
@@ -507,6 +548,7 @@ function computeMuDay(inst, prev, input){
     fills: (input.fills||[]).map(function(f){ return {type:f.type, qty:f.qty, price:f.price}; }),
     T: T, mode: mode, half: half, reverseFirstDay: reverseFirstDay,
     qty: qty, avgCost: avgCost, cash: round2(cash), value: round2(qty*input.close),
+    seasonStart: seasonStart, seasonReset: seasonReset,
     realizedPL: round2(prev.realizedPL + realizedGain),
     // 그날 적힌 매도 수량이 그 시점 보유수량보다 많아서 일부만 반영됐다는 표시.
     // 기록을 지우거나 날짜를 옮기면 뒤 기록이 이렇게 될 수 있어서, 조용히
@@ -618,74 +660,94 @@ function muBuildBuyPlan(anchors, budget){
   if (!(budget > 0)) return { anchors: [], crash: [], reason: "nobudget" };
   var rows = [], cum = 0;
   anchors.forEach(function(a){
-    if (!(a.price > 0) || !(a.share > 0)) return;
-    var q = Math.max(1, Math.floor(a.share / a.price));
+    if (!(a.price > 0)) return;
+    // 개수를 미리 정한 줄(전반전 평단줄)은 그대로, 아니면 배정액÷가격. 비싸서 0개가
+    // 나와도 라오어 표는 1개를 건다 (SOXL 300달러대, 2026-06 표).
+    var q = (a.qty != null) ? a.qty : Math.floor(a.share / a.price + 1e-9);
+    q = Math.max(1, q);
     rows.push({ label: a.label, price: round2(a.price), qty: q });
     cum += q;
   });
   if (!rows.length) return { anchors: [], crash: [], reason: "noprice" };
-  // 사다리는 "더 떨어졌을 때" 걸리는 주문이므로 가장 낮은 앵커보다 아래만
-  // 남긴다. 앵커를 절반씩 나눠 걸면 전체 금액 기준 사다리의 첫 칸이 앵커보다
-  // 위에 나올 수 있는데, 그건 이미 앵커가 담당하는 구간이다.
-  var floorPrice = rows.reduce(function(m, r){ return Math.min(m, r.price); }, Infinity);
-  var crash = buildBandLadder(cum, budget, +1, 1, function(cumQty){
-    return cumQty <= 40;
-  }).filter(function(r){ return r.price < floorPrice; }).slice(0, 8);
+  // 사다리 n번째 칸 = 매수시도금 ÷ (앞줄까지 누적개수 + n), 센트 아래 버림.
+  // 앞줄 개수가 이미 "그 가격에 살 수 있는 만큼"이라 첫 칸은 늘 가장 낮은 앞줄보다 아래다.
+  var crash = [];
+  for (var n = cum + 1; crash.length < 10; n++){
+    crash.push({ price: Math.floor(budget / n * 100 + 1e-6) / 100, qty: 1 });
+  }
   return { anchors: rows, crash: crash };
+}
+// 라오어 무매 V4.0 주문표 (팬딩 무매 중계 1,201장 검산, 2026-10-05):
+//  · 큰수 = 직전 종가×1.12. ★지점-0.01 이 큰수보다 비싸면 첫 줄을 큰수에 건다 (증권사 가격제한).
+//  · 전반전: 첫 줄 = ⌊1회매수금/2 ÷ 첫줄가격⌋개, 평단 줄 = ⌊1회매수금 ÷ 평단⌋ − 첫 줄 개수.
+//    단 첫 줄 가격이 평단 이하로 내려오면(큰수<평단) 평단 줄 없이 1회매수금 전부를 첫 줄에.
+//  · 후반전: 1회매수금 전부를 첫 줄 하나에.
+//  · 매도: 보유 ⌊1/4⌋ 를 ★지점 LOC, 나머지를 평단×(1+15%|20%) 지정가 (리버스 중에도 지정가는 유지).
+//  · 리버스: ★지점 = 최근 5일 종가평균, 매수 = 잔금/4, 매도 = ⌊보유×2/분할수⌋ (버림).
+function muFirstRow(starTrigger, close){
+  var big = close > 0 ? round2(close * 1.12) : null;
+  if (starTrigger == null) return big == null ? null : { label: "큰수", price: big };
+  if (big != null && big < starTrigger) return { label: "큰수", price: big };
+  return { label: "★지점", price: starTrigger };
 }
 function muOrderPlan(inst, last, livePrice){
   var a = inst.splitCount;
+  var base = MU_BASE_PCT[inst.ticker] || 15;
+  var restPrice = last.avgCost > 0 ? round2(last.avgCost * (1 + base/100)) : null;
   if (last.mode === "reverse"){
     var closes = inst.days.map(function(d){ return d.close; }).filter(function(c){ return c > 0; });
     var starPrice = muReverseStarPrice(closes.length ? closes : [last.close]);
-    var sellFrac = muReverseSellFraction(a);
+    var sellQty = Math.floor(last.qty * muReverseSellFraction(a) + 1e-9);
     if (last.reverseFirstDay){
-      return { mode:"reverse", firstDay:true, sellQty: Math.round(last.qty * sellFrac) };
+      return { mode:"reverse", firstDay:true, sellQty: sellQty };
     }
     var buyTrigger = starPrice!=null ? round2(starPrice - 0.01) : null;
-    var quarterCash = round2(last.cash / 4);
+    var quarterCash = last.cash / 4;   // 반올림 전 값으로 나눠야 라오어 표와 센트까지 같다
+    var first = muFirstRow(buyTrigger, last.close);
     return {
       mode: "reverse", firstDay: false, starPrice: starPrice, buyTrigger: buyTrigger,
       avgCost: last.avgCost,
-      buy: muBuildBuyPlan([{ label: "쿼터매수", price: buyTrigger, share: quarterCash }], quarterCash),
-      sellQty: Math.round(last.qty * sellFrac), sellPrice: starPrice
+      buy: muBuildBuyPlan(first ? [{ label: "쿼터매수", price: first.price, share: quarterCash }] : [], quarterCash),
+      sellQty: sellQty, sellPrice: starPrice,
+      sellRestQty: last.qty - sellQty, sellRestPrice: restPrice
     };
   }
   var starPct = muStarPct(inst.ticker, a, last.T);
   var starPrice = last.avgCost > 0 ? muStarPrice(last.avgCost, starPct) : null;
   var buyTrigger = starPrice != null ? round2(starPrice - 0.01) : null;
-  var dailyAmt = round2(muDailyBuyAmount(last.cash, a, last.T));
-  var base = MU_BASE_PCT[inst.ticker] || 15;
+  // 개수·사다리는 반올림 전 1회매수금으로 계산한다 (라오어 표: 7939.58÷13.5=588.117… → ÷12 = 49.00, 588.12÷12 면 49.01)
+  var daily = muDailyBuyAmount(last.cash, a, last.T);
+  var dailyAmt = round2(daily);
   var quarterQty = Math.floor(last.qty / 4);
-  var restQty = last.qty - quarterQty;
-  var restPrice = last.avgCost > 0 ? round2(last.avgCost * (1 + base/100)) : null;
   var plan = {
     mode: "general", half: last.half, starPct: starPct, starPrice: starPrice,
     buyTrigger: buyTrigger, dailyAmt: dailyAmt, avgCost: last.avgCost,
     sellQuarterQty: quarterQty, sellQuarterPrice: starPrice,
-    sellRestQty: restQty, sellRestPrice: restPrice
+    sellRestQty: last.qty - quarterQty, sellRestPrice: restPrice
   };
   if (last.qty === 0){
-    // 첫매수는 평단이 없어 ★지점을 못 구하므로 "종가보다 적당히 위" 가격에
-    // 큰수매수를 건다. 기준가는 기록된 종가 → 실시간 시세 → 사용자가 직접
-    // 입력한 값 순. 시세 API는 한도 초과·장 마감·장애로 언제든 비어 있을 수
-    // 있는데, 그때 첫 주문표가 통째로 막히면 안 되므로 수동 입력을 남겨둔다.
+    // 첫매수는 평단이 없어 ★지점을 못 구하므로 큰수(종가×1.12)에 건다. 기준가는
+    // 기록된 종가 → 실시간 시세 → 사용자가 직접 입력한 값 순. 시세 API는 언제든
+    // 비어 있을 수 있어서, 그때 첫 주문표가 통째로 막히지 않게 수동 입력을 남겨둔다.
     var seedPrice = last.close || livePrice || inst.manualRefPrice || 0;
     plan.firstBuyRef = seedPrice;
     plan.needsRefPrice = !(seedPrice > 0);
     plan.buy = muBuildBuyPlan([
-      { label: "첫매수(큰수)", price: buyTrigger || round2(seedPrice*1.12), share: dailyAmt }
-    ], dailyAmt);
-  } else if (last.half === "front"){
-    // 전반전은 그날 매수시도금을 ★지점과 평단에 절반씩 나눠 건다.
+      { label: "첫매수(큰수)", price: buyTrigger || round2(seedPrice*1.12), share: daily }
+    ], daily);
+    return plan;
+  }
+  var first = muFirstRow(buyTrigger, last.close);
+  plan.firstRow = first;
+  if (last.half === "front" && first && first.price > last.avgCost){
+    var q1 = Math.max(1, Math.floor(daily / 2 / first.price + 1e-9));
+    var q2 = Math.max(1, Math.floor(daily / last.avgCost + 1e-9) - q1);
     plan.buy = muBuildBuyPlan([
-      { label: "★지점", price: buyTrigger, share: round2(dailyAmt/2) },
-      { label: "평단", price: last.avgCost, share: round2(dailyAmt/2) }
-    ], dailyAmt);
+      { label: first.label, price: first.price, qty: q1 },
+      { label: "평단", price: last.avgCost, qty: q2 }
+    ], daily);
   } else {
-    plan.buy = muBuildBuyPlan([
-      { label: "★지점", price: buyTrigger, share: dailyAmt }
-    ], dailyAmt);
+    plan.buy = muBuildBuyPlan(first ? [{ label: first.label, price: first.price, share: daily }] : [], daily);
   }
   return plan;
 }
@@ -717,6 +779,7 @@ if (typeof module !== "undefined") module.exports = {
   legacyFillsFromCycle: legacyFillsFromCycle,
   migrateMuDayInputs: migrateMuDayInputs,
   muBuildBuyPlan: muBuildBuyPlan,
+  muFirstRow: muFirstRow,
   muDailyBuyAmount: muDailyBuyAmount,
   muDeriveT: muDeriveT,
   muDerivedT: muDerivedT,

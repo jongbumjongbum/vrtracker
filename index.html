@@ -674,7 +674,8 @@
       <div class="field"><label>시작한도 (%)</label><input id="ni_pl_base" type="number" autocomplete="off" inputmode="decimal" step="1" value="75" /></div>
       <div class="field"><label>감소폭 (%, 주기당)</label><input id="ni_pl_step" type="number" autocomplete="off" inputmode="decimal" step="1" value="5" /></div>
       <div class="field"><label>감소 주기 (일)</label><input id="ni_pl_stepdays" type="number" autocomplete="off" inputmode="decimal" step="1" value="182.5" /></div>
-      <div class="field"><label>최소 한도 (%)</label><input id="ni_pl_floor" type="number" autocomplete="off" inputmode="decimal" step="1" value="10" /></div>
+      <div class="field"><label>최소 한도 (%)</label><input id="ni_pl_floor" type="number" autocomplete="off" inputmode="decimal" step="1" value="25" /></div>
+      <div class="field" style="grid-column:1/3;"><label>처음 제한 없는 기간 (일) <span class="hint">라오어 VR: 시작 후 1년(365일)은 매수제한 없음, 그 뒤 시작한도부터 감소</span></label><input id="ni_pl_delay" type="number" autocomplete="off" inputmode="decimal" step="1" value="365" /></div>
       <div class="field" style="grid-column:1/3;">
         <label>고정 매수한도 (%) <span class="hint">위에서 "고정 비율 유지" 선택했을 때만 쓰여요</span></label>
         <input id="ni_pl_fixed" type="number" autocomplete="off" inputmode="decimal" step="1" value="10" />
@@ -775,6 +776,7 @@
       <div class="field"><label>감소폭 (%)</label><input id="pl_step" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
       <div class="field"><label>감소 주기 (일)</label><input id="pl_stepdays" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
       <div class="field"><label>최소 한도 (%)</label><input id="pl_floor" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
+      <div class="field" style="grid-column:1/3;"><label>처음 제한 없는 기간 (일) <span class="hint">VR 시작일부터 이 기간은 제한 없음 (라오어: 365)</span></label><input id="pl_delay" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
     </div>
     <div id="plFixedFields" class="form-grid hidden" style="grid-template-columns:1fr;">
       <div class="field"><label>고정 매수한도 (%)</label><input id="pl_fixed" type="number" autocomplete="off" inputmode="decimal" step="1" /></div>
@@ -1928,6 +1930,16 @@
       });
     });
     if (vrMarked && currentUserId) muMigrated = true;
+    // 2026-10-05 라오어 실제 중계표 기준으로 계산식을 고쳤다 (VR: 다음V 에 마지막 Pool·배당은
+    // Pool 로만 / 무매: T 를 +0.5·+1, 매도 ×0.75·×0.25·리버스 ×(1−2/분할)). 원장 결정으로 옛 기록도
+    // 한 번 전부 새 식으로 다시 계산한다. 다시 계산하기 전 상태는 백업으로 남긴다.
+    if ((state.calcRev || 0) < 2 && (state.instances.length || state.muInstances.length)){
+      if (currentUserId) stashBackup(currentUserId, state, "라오어 계산식으로 옛 기록을 다시 계산하기 직전");
+      state.instances.forEach(function(inst){ if (inst.cycles && inst.cycles.length) replayCycles(inst); });
+      state.muInstances.forEach(function(m){ if (m.days && m.days.length) replayMuDays(m); });
+      state.calcRev = 2;
+      if (currentUserId) muMigrated = true;
+    } else if (!state.calcRev) state.calcRev = 2;
     // 한 번 표시해두면 다음 render 부터는 할 일이 없다. 표시만 하고 저장을
     // 안 하면 매번 다시 하게 되고, 다른 기기와도 어긋난다.
     if (muMigrated && currentUserId) saveState();
@@ -2976,10 +2988,11 @@
       stat("매수 밴드 ↓", fmtMoney0(buyBand)) +
       stat("매도 밴드 ↑", fmtMoney0(sellBand)) +
       stat("보유수량", (last.qty || 0).toLocaleString() + "주", true) +
-      stat("매입 금액 (" + ((realAvg != null && realAvg > 0) ? "실제평단" : "실효평단") + " 기준)",
+      stat("매입 금액 (" + ((realAvg != null && realAvg > 0) ? "실제평단" : "증권사 방식 평단") + " 기준)",
         fmtMoney0((last.qty || 0) * ((realAvg != null && realAvg > 0) ? realAvg : costBasis.avgCost))) +
-      stat("실효평단 (기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
-      stat("손익 (실효평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
+      stat("평단 (증권사 방식 · 기록 기준 자동계산)", costBasis.avgCost > 0 ? fmtMoney(costBasis.avgCost) : "–") +
+      stat('실효평단 <span class="hint">라오어 방식 · (매수금−매도금)÷보유개수</span>', costBasis.qty > 0 ? fmtMoney(costBasis.laorAvgCost) : "–") +
+      stat("손익 (증권사 방식 평단 기준, 미실현)", pnlStr(refProfit, refProfitPct), false, pnlColor(refProfit)) +
       stat('실현손익 <span class="hint">이 VR에 기록한 매도만 · 손익 탭에 직접 적은 과거분 제외</span>', fmtMoney0(costBasis.realizedPL), false, pnlColor(costBasis.realizedPL)) +
       '<div class="stat"><div class="label">실제평단 (직접입력, 이후 사이클 체결이 자동 반영돼요)</div>' +
         '<input id="realAvgCostInput" type="number" autocomplete="off" inputmode="decimal" step="0.0001" class="cell-input" style="width:100%;" ' +
@@ -3867,13 +3880,13 @@
       var modeTxt = d.mode==="reverse" ? "리버스" : (d.half==="back"?"후반전":"전반전");
       return '<tr data-day-id="' + d.id + '">' +
         '<td data-label="날짜">' + fmtDate(d.date) + '</td>' +
-        '<td data-label="모드">' + modeTxt + '</td>' +
+        '<td data-label="모드">' + modeTxt + (d.seasonReset ? ' · <b>시즌 리셋</b>' : '') + '</td>' +
         '<td data-label="체결내역">' + fillsTxt + '</td>' +
         '<td class="num" data-label="종가">' + fmtMoney(d.close) + '</td>' +
         '<td class="num" data-label="T">' + (Math.round(d.T*100)/100) + '</td>' +
         '<td class="num" data-label="수량">' + d.qty + '</td>' +
         '<td class="num" data-label="평단">' + (d.avgCost>0?fmtMoney(d.avgCost):"–") + '</td>' +
-        '<td class="num" data-label="잔금">' + fmtMoney0(d.cash) + '</td>' +
+        '<td class="num" data-label="잔금"' + (d.seasonReset ? ' title="해가 바뀌어 잔금 ' + fmtMoney0(d.seasonReset.cashBefore) + ' → 원금 ' + fmtMoney0(d.seasonReset.principal) + ' 로 되돌림 (차액은 그외 예수금에 그대로)"' : '') + '>' + fmtMoney0(d.cash) + '</td>' +
         '<td class="num" data-label="실현손익">' + fmtMoney0(d.realizedPL) + '</td>' +
         '<td class="col-action">' +
           '<button type="button" class="btn btn-sm btn-ghost mu-day-edit">수정</button> ' +
@@ -5887,7 +5900,7 @@
     }
 
     // Prefer the hand-entered 실제평단 when the user has one (it's the number
-    // their broker shows); fall back to the 실효평단 derived from records.
+    // their broker shows); fall back to the broker-style average derived from records.
     var refAvg = (inst.realAvgCost != null && inst.realAvgCost > 0)
       ? inst.realAvgCost
       : computeEffectiveCostBasis(inst).avgCost;
@@ -5929,7 +5942,7 @@
         ladderSide("매도", sellTranches, qty, last.Pool, -1) +
       '</div>' +
       '<div class="footnote" style="margin-top:8px;">수량은 <b>그 주문이 체결됐을 때 총 보유수량</b>이고, Pool 잔액은 거기까지 체결됐을 때 남는 현금이에요.' +
-        (refAvg > 0 ? (' 평단대비는 ' + ((inst.realAvgCost != null && inst.realAvgCost > 0) ? "실제평단" : "실효평단") + ' ' + fmtMoney(refAvg) + ' 기준이에요.') : '') +
+        (refAvg > 0 ? (' 평단대비는 ' + ((inst.realAvgCost != null && inst.realAvgCost > 0) ? "실제평단" : "증권사 방식 평단") + ' ' + fmtMoney(refAvg) + ' 기준이에요.') : '') +
       '</div>' +
       (note ? ('<div class="footnote" style="margin-top:6px;">' + note + '</div>') : '') +
       (sellRemaining > 0
@@ -6446,6 +6459,7 @@
     document.getElementById("ni_pl_step").value = cfg.stepPct;
     document.getElementById("ni_pl_stepdays").value = cfg.stepDays;
     document.getElementById("ni_pl_floor").value = cfg.floorPct;
+    document.getElementById("ni_pl_delay").value = cfg.startDelayDays || 0;
     document.getElementById("ni_pl_fixed").value = cfg.fixedPct;
   }
   function openNewInstanceModal(){
@@ -6502,6 +6516,7 @@
       stepPct: parseFloat(document.getElementById("ni_pl_step").value) || 5,
       stepDays: parseFloat(document.getElementById("ni_pl_stepdays").value) || 182.5,
       floorPct: parseFloat(document.getElementById("ni_pl_floor").value) || 10,
+      startDelayDays: parseFloat(document.getElementById("ni_pl_delay").value) || 0,
       fixedPct: parseFloat(document.getElementById("ni_pl_fixed").value) || 10
     };
     if (!name || !date || isNaN(v) || isNaN(pool)){
@@ -6661,6 +6676,7 @@
     document.getElementById("pl_step").value = cfg.stepPct;
     document.getElementById("pl_stepdays").value = cfg.stepDays;
     document.getElementById("pl_floor").value = cfg.floorPct;
+    document.getElementById("pl_delay").value = cfg.startDelayDays || 0;
     document.getElementById("pl_fixed").value = cfg.fixedPct;
     setPoolLimitMode(cfg.mode);
     poolLimitModal.classList.remove("hidden");
@@ -6677,6 +6693,7 @@
       stepPct: parseFloat(document.getElementById("pl_step").value) || 5,
       stepDays: parseFloat(document.getElementById("pl_stepdays").value) || 182.5,
       floorPct: parseFloat(document.getElementById("pl_floor").value) || 10,
+      startDelayDays: parseFloat(document.getElementById("pl_delay").value) || 0,
       fixedPct: parseFloat(document.getElementById("pl_fixed").value) || 10
     };
     saveState();
