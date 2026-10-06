@@ -579,6 +579,7 @@
     <div class="mode-switch" id="modeSwitch">
       <button type="button" data-mode="vr" class="active">VR</button>
       <button type="button" data-mode="mu">무매</button>
+      <button type="button" data-mode="privacy">Privacy</button>
       <button type="button" data-mode="portfolio">포트폴리오</button>
       <button type="button" data-mode="pnl">손익</button>
       <button type="button" data-mode="chart">차트</button>
@@ -906,7 +907,9 @@
       (m.days||[]).forEach(function(d){ ids.push("mu:" + m.id + ":" + (d.id || d.date)); });
     });
     var pf = st.portfolio || {};
-    (pf.holdings||[]).forEach(function(h){
+    // Privacy 매매도 같은 "tr:" 로 센다 — 직접입력에서 옮겨 온 거래라 신분증이 같아야
+    // 옮기기 전 사본과 견줘도 "사라졌다"고 오판하지 않는다.
+    allTradeHoldings(st).forEach(function(h){
       (h.trades||[]).forEach(function(t){
         ids.push("tr:" + (t.id || (h.ticker + "|" + t.date + "|" + t.type + "|" + t.qty + "|" + t.price)));
       });
@@ -936,7 +939,7 @@
     (st.instances||[]).forEach(function(i){ n += (i.cycles||[]).length; });
     (st.muInstances||[]).forEach(function(i){ n += (i.days||[]).length; });
     var pf = st.portfolio || {};
-    (pf.holdings||[]).forEach(function(h){ n += (h.trades||[]).length; });
+    allTradeHoldings(st).forEach(function(h){ n += (h.trades||[]).length; });
     // assetSnapshots 는 세지 않는다. 총자산 그래프용으로 앱을 켜기만 해도
     // 날마다 하나씩 붙는데, 예전엔 이것까지 같이 세는 바람에 며칠 더 켜둔
     // 옛 기기의 사본이 "기록이 더 많다"고 오판됐다. 그래서 매매기록이 십수
@@ -1323,6 +1326,9 @@
               var cur = state.portfolio.holdings.filter(function(x){
                 return (x.ticker||"").toUpperCase() === (bh.ticker||"").toUpperCase();
               })[0];
+              // SOXL 을 Privacy 로 옮긴 뒤라면 옛 백업의 SOXL 은 Privacy 자리로 간다.
+              // 직접입력에 다시 넣으면 같은 매매가 두 군데서 잡힌다.
+              if (!cur && isPrivacyTicker(bh.ticker) && state.privacy && state.privacy.migratedAt) cur = state.privacy.holding;
               var curN = cur ? (cur.trades||[]).length : 0;
               var bakN = (bh.trades||[]).length;
               // 지금이 더 많이 들고 있으면 그게 최신이다. 덮지 않는다.
@@ -1914,6 +1920,7 @@
       if (!h.trades) h.trades = [];
       if (h.seedQty == null) migrateManualSeed(h);
     });
+    normalizePrivacy();
     // 예수금 자동 반영이 생기기 전(2026-08-19)에 적은 무매 체결은 "그외 예수금"
     // 에 안 들어가 있었다. 기록해둔 매매가 예수금에 안 잡히는 상태는 어느
     // 모로 봐도 이상해서, 한 번에 반영하고 얼마가 움직였는지 알려준다.
@@ -2141,6 +2148,71 @@
     state.portfolio.extraCash = round4((state.portfolio.extraCash || 0) + (after - before));
   }
 
+  /* --- Privacy (라오어 SOXL 매매, 기록 전용) --------------------------------
+     state.privacy = { multiple, startCash, startDate, migratedAt, holding }.
+     holding 은 직접입력 종목과 똑같은 모양이라 replayManualHolding·
+     mutateManualTrades 를 그대로 쓴다 — 평단·실현손익 계산이 수동 종목과
+     갈라지지 않고, 매매가 extraCash 를 같이 움직여 "예수금 = 입출금 + 매매
+     누적" 불변식도 그대로다. extraCash 는 여전히 "VR Pool 외 계좌 현금 전부
+     (Privacy 포함)"이고, 화면에서만 Privacy 몫과 그외로 나눠 보여준다. */
+  var PRIVACY_TICKER = "SOXL";
+  function emptyPrivacyHolding(){
+    return { ticker: PRIVACY_TICKER, qty: 0, avgCost: 0, currentPrice: 0, trades: [], realizedPL: 0,
+      seedQty: 0, seedAvgCost: 0, seedRealizedPL: 0 };
+  }
+  function normalizePrivacy(){
+    if (!state.privacy || typeof state.privacy !== "object") state.privacy = {};
+    var p = state.privacy;
+    if (!p.holding || typeof p.holding !== "object") p.holding = emptyPrivacyHolding();
+    if (!Array.isArray(p.holding.trades)) p.holding.trades = [];
+    if (p.holding.realizedPL == null) p.holding.realizedPL = 0;
+    if (p.holding.seedQty == null) migrateManualSeed(p.holding);
+  }
+  // Privacy 예수금 = 시작 기준 잔금 × 배수 − 매수 대금 + 매도 대금.
+  // 시작일을 넣었으면 그 다음 날부터의 매매만 센다 — 그날 중계표 잔금에는
+  // 그날 매매가 이미 들어 있다. 잔금·배수를 아직 안 넣었으면 0 이다.
+  function privacyCash(p){
+    if (!p || !(p.startCash > 0) || !(p.multiple > 0)) return 0;
+    var cash = p.startCash * p.multiple;
+    ((p.holding && p.holding.trades) || []).forEach(function(t){
+      if (p.startDate && t.date <= p.startDate) return;
+      cash += (t.type === "buy" ? -1 : 1) * t.qty * t.price;
+    });
+    // 너무 큰 입력이 곱해져 무한대가 되면 예수금 화면 전체가 깨지므로 0 으로 둔다.
+    return Number.isFinite(cash) ? round2(cash) : 0;
+  }
+  // 그외 예수금 = extraCash − Privacy 예수금. VR Pool 돈을 끌어다 쓰면 음수가
+  // 될 수 있고, 그대로 보여준다.
+  function otherCashAfterPrivacy(){
+    return round2((state.portfolio.extraCash || 0) - privacyCash(state.privacy));
+  }
+  // 직접입력 종목 + Privacy. 총자산·손익·예수금 내역처럼 계좌 전체를 셀 때 쓴다.
+  // 직접입력 표와 매매 입력칸은 state.portfolio.holdings 만 쓴다.
+  function allTradeHoldings(st){
+    st = st || state;
+    var hs = ((st.portfolio || {}).holdings) || [];
+    var p = st.privacy && st.privacy.holding;
+    return (p && ((p.trades || []).length || p.qty)) ? hs.concat([p]) : hs;
+  }
+  function isPrivacyTicker(t){ return (t || "").toUpperCase() === PRIVACY_TICKER; }
+  // 2026-10-06 원장 계정의 SOXL 은 전부 라오어 Privacy 매매라, 직접입력 종목의
+  // SOXL 을 Privacy 로 옮긴다. 기존분·거래를 통째로 옮기므로 보유·평단·실현손익이
+  // 같고, 이미 예수금에 반영된 매매라 extraCash 는 건드리지 않는다.
+  // 합치면 이동평균이 달라지므로, Privacy 가 비어 있고 SOXL 줄이 하나일 때만 한다.
+  // 돌려주는 값: 옮겼으면 null, 못 옮기면 그 이유.
+  function migrateSoxlToPrivacy(){
+    var src = state.portfolio.holdings.filter(function(h){ return isPrivacyTicker(h.ticker); });
+    if (!src.length) return "옮길 SOXL 기록이 없어요.";
+    if (src.length > 1) return "직접입력 종목에 SOXL 줄이 " + src.length + "개 있어요. 하나로 정리한 뒤 다시 눌러주세요.";
+    var p = state.privacy.holding;
+    if ((p.trades || []).length || p.seedQty) return "Privacy 에 이미 기록이 있어서 합칠 수 없어요.";
+    state.privacy.holding = src[0];
+    src[0].ticker = PRIVACY_TICKER;
+    state.portfolio.holdings = state.portfolio.holdings.filter(function(h){ return h !== src[0]; });
+    state.privacy.migratedAt = todayStr();
+    return null;
+  }
+
 
   function aggregateVrHoldingsByTicker(){
     var map = {};
@@ -2246,7 +2318,7 @@
         });
       });
     });
-    state.portfolio.holdings.forEach(function(h){
+    allTradeHoldings().forEach(function(h){
       (h.trades||[]).forEach(function(t){
         if (t.type === "sell") addBoth(t.date, "other", t.gain || 0, h.ticker);
       });
@@ -2738,10 +2810,10 @@
     });
     var newBtn = document.getElementById("newInstanceBtn");
     newBtn.textContent = state.viewMode === "mu" ? "+ 새 무매 만들기" : "+ 새 VR 만들기";
-    newBtn.style.display = (state.viewMode === "portfolio" || state.viewMode === "pnl" || state.viewMode === "chart") ? "none" : "";
+    newBtn.style.display = (state.viewMode === "portfolio" || state.viewMode === "pnl" || state.viewMode === "chart" || state.viewMode === "privacy") ? "none" : "";
 
     instanceList.innerHTML = "";
-    if (state.viewMode === "pnl" || state.viewMode === "chart") return;
+    if (state.viewMode === "pnl" || state.viewMode === "chart" || state.viewMode === "privacy") return;
     if (state.viewMode === "mu"){
       renderMuSidebarList();
       return;
@@ -2876,6 +2948,7 @@
     if (state.viewMode === "mu"){ renderMuDetail(); renderActionBar(); return; }
     if (state.viewMode === "pnl"){ renderPnL(); renderActionBar(); return; }
     if (state.viewMode === "chart"){ renderChartTab(); renderActionBar(); return; }
+    if (state.viewMode === "privacy"){ renderPrivacy(); renderActionBar(); return; }
     var inst = state.instances.find(function(i){ return i.id === state.selectedId; });
     if (!inst){
       mainArea.innerHTML =
@@ -3961,11 +4034,13 @@
     var vrHoldings = aggregateVrHoldingsByTicker();
     var muHoldings = aggregateMuHoldingsByTicker();
     var manual = state.portfolio.holdings;
+    // 합계·도넛·예수금 내역에는 Privacy 보유분도 들어간다 (직접입력 표에는 안 보인다).
+    var tradeHoldings = allTradeHoldings();
 
     var allTickers = [];
     vrHoldings.forEach(function(h){ if (allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
     muHoldings.forEach(function(h){ if (allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
-    manual.forEach(function(h){ if (h.ticker && allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
+    tradeHoldings.forEach(function(h){ if (h.ticker && allTickers.indexOf(h.ticker)===-1) allTickers.push(h.ticker); });
 
     var vrTotal = 0, vrInvestedReal = 0, vrValueReal = 0;
     vrHoldings.forEach(function(h){
@@ -3980,7 +4055,7 @@
     var vrProfit = vrInvestedReal > 0 ? (vrValueReal - vrInvestedReal) : null;
     var vrProfitPct = (vrProfit != null && vrInvestedReal > 0) ? (vrProfit/vrInvestedReal*100) : null;
     var manualValueTotal = 0, manualCostTotal = 0;
-    manual.forEach(function(h){
+    tradeHoldings.forEach(function(h){
       var live = h.ticker ? getLivePrice(h.ticker) : null;
       var price = live != null ? live : (h.currentPrice||0);
       manualValueTotal += (h.qty||0) * price;
@@ -4009,7 +4084,7 @@
       vrRealizedTotal += computeEffectiveCostBasis(inst).realizedPL;
     });
     var manualRealizedTotal = 0;
-    manual.forEach(function(h){ manualRealizedTotal += h.realizedPL || 0; });
+    tradeHoldings.forEach(function(h){ manualRealizedTotal += h.realizedPL || 0; });
     // The snapshot stores the recorded-trade figure only; the 손익 tab's typed-in
     // pre-app entries are layered on when the snapshot is displayed, so storing
     // them here too would count them twice on the 누적손익 graph.
@@ -4018,8 +4093,11 @@
     // 예수금은 VR Pool과 그외 예수금 둘로만 나눈다. 무매가 굴리는 현금도
     // 결국 같은 계좌의 그외 현금이라, 따로 더하면 직접 입력한 금액과 이중으로
     // 잡혀 증권사 숫자와 어긋난다.
+    // Privacy 예수금은 그 안에서 떼어 보여줄 뿐, 합계는 그대로다.
     var otherCashTotal = extraCash;
     var cashTotal = vrPoolTotal + otherCashTotal;
+    var pvCash = privacyCash(state.privacy);
+    var otherCashNet = otherCashAfterPrivacy();
     var grandTotal = stockTotal + cashTotal;
 
     var head = document.createElement("div");
@@ -4068,12 +4146,14 @@
       '</div>' +
       stat("예수금 합계 (VR Pool + 그외, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
-      '<div class="stat"><div class="label">└ 그외 예수금 <span class="hint">VR Pool 말고 나머지 현금 전부 · ' + curSymbol() + ' 기준</span></div>' +
+      stat("└ Privacy 예수금", fmtCurrency(pvCash)) +
+      stat("└ 그외 예수금 = 계좌 현금 칸 − Privacy", fmtCurrency(otherCashNet), false, otherCashNet < 0 ? "var(--sell)" : undefined) +
+      '<div class="stat"><div class="label">VR Pool 외 계좌 현금 (Privacy 포함) <span class="hint">증권사 예수금 − VR Pool · ' + curSymbol() + ' 기준</span></div>' +
         '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" class="cell-input" style="width:100%;" ' +
         'value="' + usdToInputValue(extraCash) + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
       // 실현손익은 손익 탭이 기간까지 골라가며 훨씬 깔끔하게 보여줘서 여기선 뺐다.
-      stat("VR이외 미실현수익금(수익률) — 직접입력+무매", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit));
+      stat("VR이외 미실현수익금(수익률) — 직접입력+무매+Privacy", pnlCombined(otherProfit, otherProfitPct), false, pfPnlColor(otherProfit));
     mainArea.appendChild(stats);
 
     var extraCashInput = document.getElementById("extraCashInput");
@@ -4094,13 +4174,13 @@
     // 로그를 저장해서, 거래를 수정하면 옛 줄이 그대로 남아 같은 매도가 두 번
     // 보였다. 파생으로 바꾸면 그런 유령 줄이 생길 수 없다.
     var derivedCashRows = [];
-    state.portfolio.holdings.forEach(function(h){
+    tradeHoldings.forEach(function(h){
       (h.trades||[]).forEach(function(t){
         derivedCashRows.push({
           date: t.date,
           kind: t.type === "buy" ? "매수" : "매도",
           amount: (t.type === "buy" ? -1 : 1) * t.qty * t.price,
-          note: h.ticker + " " + t.qty + "주 " + (t.type === "buy" ? "매수" : "매도") +
+          note: (h === state.privacy.holding ? "Privacy " : "") + h.ticker + " " + t.qty + "주 " + (t.type === "buy" ? "매수" : "매도") +
                 (t.type === "sell" ? (" (실현손익 " + fmtCurrency(t.gain||0) + ")") : "")
         });
       });
@@ -4143,7 +4223,7 @@
     // (그래서 지울 때도 예수금을 건드리면 안 된다) legacy 로 따로 표시한다.
     // 같은 매도가 새 방식으로도 남아 있으면 두 번 보이니 그건 뺀다.
     var liveTradeIds = {};
-    state.portfolio.holdings.forEach(function(h){
+    tradeHoldings.forEach(function(h){
       (h.trades||[]).forEach(function(t){ liveTradeIds[t.id] = true; });
     });
     var legacyTradeRows = state.portfolio.cashLog
@@ -4284,7 +4364,7 @@
       var price = live != null ? live : (h.qty ? h.value/h.qty : 0);
       addTicker(h.ticker, h.qty*price, h.investedReal||0, h.qty, h.qtyWithReal||0);
     });
-    manual.forEach(function(h){
+    tradeHoldings.forEach(function(h){
       if (!h.ticker || !h.qty) return;
       var live = getLivePrice(h.ticker);
       var price = live != null ? live : (h.currentPrice||0);
@@ -4543,6 +4623,212 @@
     });
   }
 
+  /* ---------------- Privacy 탭 ----------------
+     라오어 Privacy 로 굴리는 SOXL 의 실제 체결 기록. 지금은 기록 전용이라
+     다음 주문은 계산하지 않는다. 매매는 직접입력 종목과 같은 함수로 다시
+     계산하고 예수금(extraCash)을 같이 움직인다. */
+  function renderPrivacy(){
+    var p = state.privacy, h = p.holding;
+    var head = document.createElement("div");
+    head.innerHTML =
+      '<div class="detail-head">' +
+        '<div><h2>Privacy (' + PRIVACY_TICKER + ')</h2>' +
+        '<div class="sub">라오어 Privacy 실제 체결 기록 · 기록 전용 (다음 주문은 계산하지 않아요)</div></div>' +
+        '<div class="head-actions">' + priceRefreshBtnHtml("pvPriceRefreshBtn") + '</div>' +
+      '</div>';
+    mainArea.appendChild(head);
+    wirePriceRefreshBtn("pvPriceRefreshBtn", [PRIVACY_TICKER]);
+    appendFetchNote();
+
+    // 직접입력 종목에 SOXL 이 남아 있으면 옮기기를 권한다. 원장 결정 없이
+    // 몰래 옮기지 않는다 — SOXL 을 Privacy 로 안 쓰는 계정도 있을 수 있다.
+    var soxlManual = state.portfolio.holdings.filter(function(x){ return isPrivacyTicker(x.ticker); });
+    if (soxlManual.length && !p.migratedAt){
+      var n = soxlManual.reduce(function(s, x){ return s + (x.trades || []).length; }, 0);
+      var mig = document.createElement("div");
+      mig.className = "limit-box";
+      mig.style.marginBottom = "16px";
+      mig.innerHTML = '<div class="limit-line"><b>직접 추가한 종목에 SOXL 기록이 있어요</b> (매매 ' + n + '건' +
+        (soxlManual[0].seedQty > 0 ? (', 기존분 ' + soxlManual[0].seedQty + '주') : '') + ').<br>' +
+        'SOXL 이 전부 Privacy 매매라면 여기로 옮기세요. 보유·평단·실현손익은 그대로이고, 이미 반영된 매매라 예수금도 그대로예요. ' +
+        '옮기기 전 상태는 [기록 복구]에 남겨둬요.</div>' +
+        '<div class="form-actions" style="justify-content:flex-start;"><button class="btn btn-primary" id="pvMigrateBtn" type="button">SOXL 기록을 Privacy 로 옮기기</button></div>';
+      mainArea.appendChild(mig);
+      document.getElementById("pvMigrateBtn").addEventListener("click", function(){
+        if (!confirm("직접 추가한 종목의 SOXL 기록(매매 " + n + "건)을 Privacy 로 옮길까요?\n\n" +
+          "직접입력 표에서는 SOXL 이 빠지고, 총자산·손익에는 Privacy 로 그대로 잡혀요.")) return;
+        stashBackup(currentUserId, state, "SOXL 기록을 Privacy 로 옮기기 직전");
+        var why = migrateSoxlToPrivacy();
+        if (why){ alert(why); return; }
+        saveState();
+        render();
+      });
+    }
+
+    var setUp = p.startCash > 0 && p.multiple > 0;
+    var pvCash = privacyCash(p);
+    var otherNet = otherCashAfterPrivacy();
+    var live = getLivePrice(PRIVACY_TICKER);
+    var price = live != null ? live : (h.currentPrice || 0);
+    var qty = h.qty || 0, avg = h.avgCost || 0;
+    var value = qty * price, cost = qty * avg;
+    var upl = value - cost;
+    function plColor(v){ return v > 0 ? "var(--buy)" : (v < 0 ? "var(--sell)" : undefined); }
+
+    if (!setUp){
+      var warn = document.createElement("div");
+      warn.className = "limit-box";
+      warn.style.marginBottom = "16px";
+      warn.innerHTML = '<div class="limit-line"><b>아래 "Privacy 설정"에 시작 기준 잔금과 배수를 넣어주세요.</b> ' +
+        '넣기 전까지 Privacy 예수금은 0 으로 보고, 그외 예수금에서 떼지 않아요.</div>';
+      mainArea.appendChild(warn);
+    }
+
+    var stats = document.createElement("div");
+    stats.className = "stat-strip";
+    stats.innerHTML =
+      stat("보유 수량", qty ? (round4(qty) + "주") : "0주") +
+      stat("평단", qty ? fmtCurrency(avg) : "–") +
+      stat("현재가" + (live == null ? ' <span class="hint">실시간 아님 · 마지막 매매가</span>' : ''), price ? fmtCurrency(price) : "–") +
+      stat("평가액", fmtCurrency(value)) +
+      stat("평가손익(수익률)", qty ? (fmtCurrency(upl) + (cost > 0 ? (" (" + fmtPct(upl/cost*100, 1) + ")") : "")) : "–", false, plColor(upl)) +
+      stat("실현손익", fmtCurrency(h.realizedPL || 0), false, plColor(h.realizedPL || 0)) +
+      stat("Privacy 예수금", setUp ? fmtCurrency(pvCash) : "설정 전 (0)") +
+      stat("그외 예수금 <span class=\"hint\">계좌 현금 − Privacy</span>", fmtCurrency(otherNet), false, otherNet < 0 ? "var(--sell)" : undefined);
+    mainArea.appendChild(stats);
+
+    var setCard = document.createElement("div");
+    setCard.className = "card";
+    setCard.innerHTML = "<h3>Privacy 설정</h3>" +
+      '<div class="card-desc"><b>시작 기준 잔금</b>은 시작하는 날 라오어 중계표의 잔금(1배수 기준)이에요. ' +
+      '<b>Privacy 예수금 시작값 = 잔금 × 배수</b>이고, 그 뒤로 여기 적은 매수 대금은 빠지고 매도 대금은 더해져요.<br>' +
+      '<b>시작일</b>을 넣으면 그 다음 날부터의 매매만 반영해요 (그날 잔금에 그날 매매가 이미 들어 있으니까요). 비워두면 여기 적힌 매매를 전부 반영해요.<br>' +
+      'Privacy 예수금은 포트폴리오 탭의 "VR Pool 외 계좌 현금"에서 떼어 보여줄 뿐이라 예수금 합계는 그대로예요. ' +
+      'VR Pool 돈을 끌어다 쓰면 그외 예수금이 음수가 될 수 있어요.</div>' +
+      '<div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));align-items:end;">' +
+        field("배수", '<input id="pv_multiple" type="number" autocomplete="off" inputmode="decimal" step="any" min="0" placeholder="예: 6" value="' + (p.multiple > 0 ? p.multiple : "") + '" />') +
+        field("시작 기준 잔금 ($, 1배수)", '<input id="pv_startCash" type="number" autocomplete="off" inputmode="decimal" step="0.01" min="0" placeholder="중계표 잔금" value="' + (p.startCash > 0 ? p.startCash : "") + '" />') +
+        field("시작일 (선택)", '<input id="pv_startDate" type="date" autocomplete="off" value="' + (p.startDate || "") + '" />') +
+        '<div class="form-actions" style="margin-top:0;"><button class="btn btn-primary" id="pvSaveBtn" type="button" style="width:100%;">설정 저장</button></div>' +
+      '</div>' +
+      (setUp ? ('<div class="footnote" style="margin-top:8px;">시작값 ' + fmtCurrency(round2(p.startCash * p.multiple)) + ' = ' +
+        fmtCurrency(p.startCash) + ' × ' + p.multiple + '</div>') : '');
+    mainArea.appendChild(setCard);
+    document.getElementById("pvSaveBtn").addEventListener("click", function(){
+      var m = document.getElementById("pv_multiple").value.trim();
+      var c = document.getElementById("pv_startCash").value.trim();
+      var d = document.getElementById("pv_startDate").value;
+      var mv = m === "" ? null : parseStrictNumber(m), cv = c === "" ? null : parseStrictNumber(c);
+      if ((mv !== null && !(mv > 0)) || (cv !== null && !(cv > 0))){
+        alert("배수와 시작 기준 잔금은 0보다 큰 숫자여야 해요. 아직 모르면 비워두세요.");
+        return;
+      }
+      p.multiple = mv; p.startCash = cv; p.startDate = d || null;
+      saveState();
+      renderMain();
+    });
+
+    var trades = (h.trades || []).slice().sort(function(a,b){ return new Date(b.date) - new Date(a.date); });
+    var rows = trades.map(function(t){
+      var buy = t.type === "buy";
+      var amount = t.qty * t.price;
+      return '<tr><td data-label="날짜">' + fmtDate(t.date) + '</td>' +
+        '<td data-label="구분"><span class="signal-badge ' + (buy ? "signal-buy" : "signal-sell") + '" style="padding:2px 8px;font-size:11px;"><span class="dot"></span>' + (buy ? "매수" : "매도") + '</span></td>' +
+        '<td class="num" data-label="수량">' + t.qty + '</td>' +
+        '<td class="num" data-label="가격">' + fmtCurrency(t.price) + '</td>' +
+        '<td class="num" data-label="금액">' + fmtCurrency(amount) + '</td>' +
+        '<td class="num" data-label="실현손익">' + (buy ? '<span class="footnote">–</span>' :
+          ('<span style="color:' + (plColor(t.gain || 0) || "var(--ink-soft)") + '">' + fmtCurrency(t.gain || 0) + '</span>')) + '</td>' +
+        '<td data-label="메모">' + escapeHtml(t.note || "") + '</td>' +
+        '<td class="col-action"><button type="button" class="btn btn-sm btn-ghost pv-edit" data-t="' + t.id + '">수정</button> ' +
+          '<button type="button" class="btn btn-sm btn-ghost btn-danger pv-del" data-t="' + t.id + '">삭제</button></td></tr>';
+    }).join("");
+    var trCard = document.createElement("div");
+    trCard.className = "card";
+    trCard.innerHTML = "<h3>매수/매도 기록</h3>" +
+      '<div class="card-desc">계좌에서 실제로 체결된 SOXL 매매를 적어주세요. 수량·평단·실현손익은 직접입력 종목과 같은 방식(이동평균)으로 계산되고, ' +
+      '매수 대금은 계좌 현금에서 빠지고 매도 대금은 더해져요.' +
+      (h.seedQty > 0 ? ('<br>기존분(첫 기록 전부터 갖고 있던 물량): ' + round4(h.seedQty) + '주 @ ' + fmtCurrency(h.seedAvgCost || 0)) : '') + '</div>' +
+      '<div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end;">' +
+        field("날짜", '<input id="pv_date" type="date" autocomplete="off" value="' + todayStr() + '" />') +
+        field("구분", '<select id="pv_type"><option value="buy">매수</option><option value="sell">매도</option></select>') +
+        field("수량", '<input id="pv_qty" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 10" />') +
+        field("가격 ($)", '<input id="pv_price" type="number" autocomplete="off" inputmode="decimal" step="0.0001" placeholder="예: 23.45" />') +
+        field("메모 (선택)", '<input id="pv_note" type="text" autocomplete="off" placeholder="예: LOC" />') +
+      '</div>' +
+      '<div class="form-actions"><button class="btn btn-primary" id="pvAddBtn" type="button">기록하기</button></div>' +
+      (rows ? ('<div class="table-wrap" style="margin-top:14px;"><table class="stack-mobile"><thead><tr><th>날짜</th><th>구분</th><th class="num">수량</th><th class="num">가격</th><th class="num">금액</th><th class="num">실현손익</th><th>메모</th><th class="col-action"></th></tr></thead><tbody>' + rows + '</tbody></table></div>')
+        : '<div class="chart-empty" style="margin-top:14px;">아직 기록이 없어요.</div>');
+    mainArea.appendChild(trCard);
+
+    function sortTrades(list){ list.sort(function(a,b){ return new Date(a.date) - new Date(b.date); }); }
+    document.getElementById("pvAddBtn").addEventListener("click", function(){
+      var type = document.getElementById("pv_type").value;
+      var q = parseStrictNumber(document.getElementById("pv_qty").value);
+      var pr = parseStrictNumber(document.getElementById("pv_price").value);
+      var date = document.getElementById("pv_date").value || todayStr();
+      var note = document.getElementById("pv_note").value.trim();
+      if (isNaN(q) || q <= 0 || isNaN(pr) || pr <= 0){ alert("수량과 가격을 입력해주세요."); return; }
+      if (type === "sell" && (h.qty || 0) <= 0){ alert("팔 수량이 없어요."); return; }
+      var id = uid();
+      mutateManualTrades(h, function(list){
+        var t = { id: id, date: date, type: type, qty: q, price: pr };
+        if (note) t.note = note;
+        list.push(t);
+        sortTrades(list);
+      });
+      h.currentPrice = pr;
+      var rec = h.trades.find(function(t){ return t.id === id; });
+      if (type === "sell" && rec && rec.qty < q) alert("보유수량보다 많이 입력해서 " + rec.qty + "주만 매도로 기록했어요.");
+      saveState();
+      renderMain();
+    });
+    Array.prototype.forEach.call(trCard.querySelectorAll(".pv-del"), function(btn){
+      btn.addEventListener("click", function(){
+        var t = h.trades.find(function(x){ return x.id === btn.getAttribute("data-t"); });
+        if (!t) return;
+        if (!confirm(fmtDate(t.date) + " " + (t.type === "buy" ? "매수" : "매도") + " " + t.qty + "주 @ " + fmtCurrency(t.price) +
+          "\n\n이 거래를 삭제할까요?\n수량·평단·실현손익과 예수금이 이 거래가 없었던 상태로 다시 계산돼요.")) return;
+        mutateManualTrades(h, function(list){
+          var i = list.findIndex(function(x){ return x.id === t.id; });
+          if (i !== -1) list.splice(i, 1);
+        });
+        // 직접입력에서 옮겨 온 원화 매수라면 짝 입금 줄도 같이 사라져야 한다.
+        syncKrwDeposit(t.id, null);
+        saveState();
+        renderMain();
+      });
+    });
+    Array.prototype.forEach.call(trCard.querySelectorAll(".pv-edit"), function(btn){
+      btn.addEventListener("click", function(){
+        var t = h.trades.find(function(x){ return x.id === btn.getAttribute("data-t"); });
+        if (!t) return;
+        var qs = prompt("수량", String(t.qty)); if (qs === null) return;
+        var ps = prompt("가격 ($)", String(t.price)); if (ps === null) return;
+        var ds = prompt("날짜 (YYYY-MM-DD)", t.date); if (ds === null) return;
+        var ts = prompt('구분: "매수" 또는 "매도"', t.type === "buy" ? "매수" : "매도"); if (ts === null) return;
+        var ns = prompt("메모 (없으면 비워두세요)", t.note || ""); if (ns === null) return;
+        var nq = parseStrictNumber(qs), np = parseStrictNumber(ps);
+        var nt = (ts.trim() === "매도" || ts.trim().toLowerCase() === "sell") ? "sell" : "buy";
+        if (isNaN(nq) || nq <= 0 || isNaN(np) || np <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(ds.trim())){
+          alert("수량·가격은 0보다 큰 숫자, 날짜는 YYYY-MM-DD 형식이어야 해요.");
+          return;
+        }
+        mutateManualTrades(h, function(list){
+          var x = list.find(function(y){ return y.id === t.id; });
+          x.qty = nq; x.price = np; x.date = ds.trim(); x.type = nt;
+          if (ns.trim()) x.note = ns.trim(); else delete x.note;
+          if (nt === "sell") delete x.krwAmount;   // 원화 금액은 매수에만 의미가 있다
+          sortTrades(list);
+        });
+        // 예수금이 새 매수액으로 갱신된 뒤라야 원화 짝 입금 줄 상쇄가 맞는다.
+        syncKrwDeposit(t.id, h.trades.find(function(y){ return y.id === t.id; }));
+        saveState();
+        renderMain();
+      });
+    });
+  }
+
   /* ---------------- 차트 탭 ---------------- */
   // 조회 결과는 메모리에만 캐시한다. 시세와 같은 원칙으로 사용자가 [조회]를
   // 누를 때만 API를 쓰고(250일치 1건 = 1크레딧), 탭을 오갈 때는 재조회하지 않는다.
@@ -4674,7 +4960,7 @@
       var l = muLastState(m);
       qty += (l.qty||0); cost += (l.qty||0) * (l.avgCost||0);
     });
-    state.portfolio.holdings.forEach(function(h){
+    allTradeHoldings().forEach(function(h){
       if ((h.ticker||"").toUpperCase() !== t) return;
       qty += (h.qty||0); cost += (h.qty||0) * (h.avgCost||0);
     });
@@ -4830,7 +5116,7 @@
     }
     state.instances.forEach(function(i){ addOwned(i.ticker); });
     state.muInstances.forEach(function(m){ addOwned(m.ticker); });
-    state.portfolio.holdings.forEach(function(h){ addOwned(h.ticker); });
+    allTradeHoldings().forEach(function(h){ addOwned(h.ticker); });
 
     var searchCard = document.createElement("div");
     searchCard.className = "card";
@@ -6791,10 +7077,11 @@
         });
       });
     });
-    state.portfolio.holdings.forEach(function(h){
+    allTradeHoldings().forEach(function(h){
+      var src = (h === state.privacy.holding) ? "Privacy" : "직접입력";
       (h.trades||[]).forEach(function(t){
-        push(t.date, "직접입력", h.ticker || "", h.ticker, t.type === "buy" ? "매수" : "매도",
-          t.qty, t.price, t.type === "sell" ? (t.gain||0) : null, "");
+        push(t.date, src, h.ticker || "", h.ticker, t.type === "buy" ? "매수" : "매도",
+          t.qty, t.price, t.type === "sell" ? (t.gain||0) : null, t.note || "");
       });
     });
     (state.portfolio.cashLog||[]).forEach(function(e){

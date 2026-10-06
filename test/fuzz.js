@@ -81,7 +81,9 @@
     });
 
     var pf = s.portfolio || {};
-    (pf.holdings || []).forEach(function(h, hi){
+    // Privacy 보유분도 직접입력 종목과 같은 규칙으로 계산되고 예수금을 같이 움직인다.
+    var tradeHs = (pf.holdings || []).concat((s.privacy && s.privacy.holding) ? [s.privacy.holding] : []);
+    tradeHs.forEach(function(h, hi){
       var tag = '직접입력#' + hi + '(' + h.ticker + ')';
       var qty = 0, cost = 0, realized = 0;
       (h.trades||[]).forEach(function(t){
@@ -121,7 +123,7 @@
     });
 
     // 원화 매수에는 같은 금액(달러)의 자동 입금 줄이 정확히 하나 붙어 있어야 한다.
-    (pf.holdings||[]).forEach(function(h, hi){
+    tradeHs.forEach(function(h, hi){
       (h.trades||[]).forEach(function(t){
         var linked = (pf.cashLog||[]).filter(function(e){ return e.tradeId === t.id; });
         var want = (t.type === 'buy' && t.krwAmount > 0);
@@ -136,7 +138,7 @@
     });
     // 지워진 거래의 짝 입금 줄이 남아 있으면 예수금이 그만큼 부풀어 있다.
     var liveTradeIds = {};
-    (pf.holdings||[]).forEach(function(h){ (h.trades||[]).forEach(function(t){ liveTradeIds[t.id] = true; }); });
+    tradeHs.forEach(function(h){ (h.trades||[]).forEach(function(t){ liveTradeIds[t.id] = true; }); });
     (pf.cashLog||[]).forEach(function(e){
       if (e.tradeId && !liveTradeIds[e.tradeId]){
         bad.push('없어진 거래의 짝 입금 줄이 남아 있음 (' + e.tradeId + ')');
@@ -146,7 +148,7 @@
     // 그외 예수금 = 입출금 + 직접입력 매매 + (반영된) 무매 매매
     var expected = 0;
     (pf.cashLog||[]).forEach(function(e){ if (e.kind==='입금'||e.kind==='출금') expected += e.amount; });
-    (pf.holdings||[]).forEach(function(h){
+    tradeHs.forEach(function(h){
       (h.trades||[]).forEach(function(t){ expected += (t.type==='buy'?-1:1) * t.qty * t.price; });
     });
     (s.muInstances||[]).forEach(function(m){
@@ -351,6 +353,38 @@
       window.prompt = function(){ return ans[ai++]; };
       btns[Math.floor(rand()*btns.length)].click();
     },
+    pvTrade: function(rand){
+      tab('privacy');
+      var isSell = rand() < 0.35;
+      set('pv_type', isSell ? 'sell' : 'buy');
+      set('pv_qty', 1 + Math.floor(rand()*20));
+      set('pv_price', (10 + rand()*40).toFixed(2));
+      set('pv_date', d(rand, '2026-08-01', 40));
+      $('pvAddBtn').click();
+    },
+    pvEdit: function(rand){
+      tab('privacy');
+      var btns = document.querySelectorAll('.pv-edit');
+      if (!btns.length) return 'skip';
+      // 묻는 순서: 수량 · 가격 · 날짜 · 구분 · 메모.
+      var ans = [String(1+Math.floor(rand()*20)), (10+rand()*40).toFixed(2), d(rand,'2026-08-01',40),
+        rand() < 0.35 ? '매도' : '매수', ''], ai=0;
+      window.prompt = function(){ return ans[ai++]; };
+      btns[Math.floor(rand()*btns.length)].click();
+    },
+    pvDelete: function(rand){
+      tab('privacy');
+      var btns = document.querySelectorAll('.pv-del');
+      if (!btns.length) return 'skip';
+      btns[Math.floor(rand()*btns.length)].click();
+    },
+    pvSettings: function(rand){
+      tab('privacy');
+      set('pv_multiple', rand() < 0.2 ? '' : String(1 + Math.floor(rand()*8)));
+      set('pv_startCash', rand() < 0.2 ? '' : String(100 + Math.floor(rand()*3000)));
+      set('pv_startDate', rand() < 0.5 ? '' : d(rand, '2026-08-01', 40));
+      $('pvSaveBtn').click();
+    },
     cashIn: function(rand){
       tab('portfolio');
       set('cashLogType', rand()<0.5?'in':'out');
@@ -407,7 +441,7 @@
       if (vrFillCount() === before) return 'skip';
     },
     switchTab: function(rand){
-      tab(['vr','mu','portfolio','pnl'][Math.floor(rand()*4)]);
+      tab(['vr','mu','portfolio','pnl','privacy'][Math.floor(rand()*5)]);
     }
   };
   var NAMES = Object.keys(ACTIONS);

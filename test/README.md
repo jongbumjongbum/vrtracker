@@ -52,6 +52,8 @@ JSON.stringify(__fuzz(80, 1))
   있는지 / 지워진 거래의 입금 줄이 남아 있지 않은지
 - **예수금** — 그외 예수금이 입출금 + 직접입력 매매 + 무매 매매 + VR 적립·인출의
   합과 같은지 (VR 적립은 계좌 안에서 옮기는 돈이라 그외에서 빠진다)
+- **Privacy** — Privacy(SOXL) 매매도 직접입력 종목과 같은 규칙으로 수량·실현손익·
+  예수금을 검사한다 (fuzz 조작: 매매 추가·수정·삭제, 설정 바꾸기)
 
 ## 원화 매수 검사 (krw.js)
 
@@ -111,6 +113,18 @@ var s=document.createElement('script'); s.src='xfer.js'; document.body.appendChi
 빈 배열 `[]` 이면 통과다. `fuzz.js` 에도 같은 조작(`transferMuToVr`)이 들어
 있고, 결과의 `조작별` 에서 실제로 몇 번 실행됐는지 볼 수 있다.
 
+## Privacy 검사 (privacy.js)
+
+브라우저 없이 돈다. 직접입력 SOXL 을 Privacy 로 옮겨도 보유·평단·실현손익·예수금·
+동기화 신분증이 그대로인지, 두 번 안 옮기는지, Privacy 예수금(잔금 × 배수 − 매수 +
+매도, 시작일 다음 날부터)과 그외 예수금(음수 포함)이 맞는지 본다.
+
+```bash
+node test/privacy.js
+```
+
+빈 배열 `[]` 이면 통과다.
+
 ## 기기 간 동기화 검사 (sync.js)
 
 기록을 두 번 날려먹은 자리라 따로 검사를 만들어 뒀어요. **다른 기기에 남아
@@ -152,3 +166,4 @@ __syncTest.report()
 - `krw.js` — 원화 매수 시나리오 검사 (정해진 순서를 밟으며 숫자 확인)
 - `vrclose.js` — VR 마감 폼이 종가를 스스로 채우는지 검사
 - `sync.js` — 기기 간 동기화 상황 검사
+- `privacy.js` — Privacy(SOXL) 옮기기·예수금 나누기 검사 (node)
