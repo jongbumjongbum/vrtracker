@@ -1815,7 +1815,7 @@
     var msg = mu.name + " → " + inst.name + "\n\n" +
       "· 무매 " + mu.name + ": " + fmtDate(date) + "에 " + qty + "주를 " + fmtMoney(price) + "에 판 것으로 기록\n" +
       "· VR " + inst.name + ": " + fmtDate(date) + " 사이클(" + (ci + 1) + "번째)에 " + qty + "주를 " + fmtMoney(price) + "에 산 것으로 기록\n\n" +
-      "VR Pool에서 " + fmtMoney(amt) + "이 빠지고 그외 예수금에 " + fmtMoney(amt) + "이 들어와요. 계좌 전체 예수금은 그대로예요 (1센트 미만 반올림 차이 제외).\n" +
+      "VR Pool에서 " + fmtMoney(amt) + "이 빠지고 무매 예수금(잔금)에 " + fmtMoney(amt) + "이 들어와요. 계좌 전체 예수금은 그대로예요 (1센트 미만 반올림 차이 제외).\n" +
       "무매 실현손익에는 (" + fmtMoney(price) + " − 무매 평단) × " + qty + "주가 잡혀요.";
     if (ci !== inst.cycles.length - 1){
       msg += "\n\n※ 뒤에 있는 " + (inst.cycles.length - 1 - ci) + "개 사이클의 V·Pool·밴드가 다시 계산돼요.";
@@ -2181,10 +2181,18 @@
     // 너무 큰 입력이 곱해져 무한대가 되면 예수금 화면 전체가 깨지므로 0 으로 둔다.
     return Number.isFinite(cash) ? round2(cash) : 0;
   }
-  // 그외 예수금 = extraCash − Privacy 예수금. VR Pool 돈을 끌어다 쓰면 음수가
-  // 될 수 있고, 그대로 보여준다.
-  function otherCashAfterPrivacy(){
-    return round2((state.portfolio.extraCash || 0) - privacyCash(state.privacy));
+  // 무매 예수금 = 무매마다 남은 잔금(원금 − 매수 + 매도)의 합. Privacy 처럼
+  // 계좌 현금 칸 안에서 떼어 보여줄 뿐이라, 무매를 지우면 그 잔금은 저절로
+  // 그외 예수금으로 돌아간다 (2026-10-07 원장 결정).
+  function muCash(){
+    var sum = 0;
+    (state.muInstances || []).forEach(function(m){ sum += muLastState(m).cash || 0; });
+    return Number.isFinite(sum) ? round2(sum) : 0;
+  }
+  // 그외 예수금 = extraCash − Privacy 예수금 − 무매 예수금. VR Pool 돈을 끌어다
+  // 쓰면 음수가 될 수 있고, 그대로 보여준다.
+  function otherCashLeft(){
+    return round2((state.portfolio.extraCash || 0) - privacyCash(state.privacy) - muCash());
   }
   // 직접입력 종목 + Privacy. 총자산·손익·예수금 내역처럼 계좌 전체를 셀 때 쓴다.
   // 직접입력 표와 매매 입력칸은 state.portfolio.holdings 만 쓴다.
@@ -3685,11 +3693,11 @@
     wireMuHistoryActions(histCard, inst);
 
     document.getElementById("deleteMuBtn").addEventListener("click", function(){
-      // 기록만 없애고 "그외 예수금"은 건드리지 않는다 — 기록을 지운다고 이미
-      // 오간 돈이 계좌로 돌아오는 건 아니어서다. 다만 변동내역에서 줄이 사라지니
-      // 숫자가 안 맞아 보일 수 있어 미리 말해준다.
+      // 계좌 현금 칸(extraCash)은 건드리지 않는다 — 이미 오간 돈이라서다.
+      // 무매 예수금은 그 칸에서 떼어 보여주던 것뿐이라, 지우면 이 무매의 잔금이
+      // 그외 예수금으로 돌아간다.
       if (confirm(inst.name + "을(를) 삭제할까요? 되돌릴 수 없어요.\n\n" +
-        '"그외 예수금" 금액은 그대로 둬요 (실제로 오간 돈이라서요). 변동내역에서만 이 무매 줄이 사라지니, 필요하면 예수금을 직접 맞춰주세요.')){
+        '이 무매의 잔금 ' + fmtCurrency(muLastState(inst).cash || 0) + '은 "그외 예수금"으로 돌아가요 (계좌 전체 예수금은 그대로). 변동내역에서는 이 무매 줄이 사라져요.')){
         state.muInstances = state.muInstances.filter(function(i){ return i.id !== inst.id; });
         state.muSelectedId = state.muInstances.length ? state.muInstances[0].id : null;
         saveState(); render();
@@ -3971,7 +3979,7 @@
         '<td class="num" data-label="T">' + (Math.round(d.T*100)/100) + '</td>' +
         '<td class="num" data-label="수량">' + d.qty + '</td>' +
         '<td class="num" data-label="평단">' + (d.avgCost>0?fmtMoney(d.avgCost):"–") + '</td>' +
-        '<td class="num" data-label="잔금"' + (d.seasonReset ? ' title="해가 바뀌어 잔금 ' + fmtMoney0(d.seasonReset.cashBefore) + ' → 원금 ' + fmtMoney0(d.seasonReset.principal) + ' 로 되돌림 (차액은 그외 예수금에 그대로)"' : '') + '>' + fmtMoney0(d.cash) + '</td>' +
+        '<td class="num" data-label="잔금"' + (d.seasonReset ? ' title="해가 바뀌어 잔금 ' + fmtMoney0(d.seasonReset.cashBefore) + ' → 원금 ' + fmtMoney0(d.seasonReset.principal) + ' 로 되돌림 (차액은 그외 예수금에서 오감)"' : '') + '>' + fmtMoney0(d.cash) + '</td>' +
         '<td class="num" data-label="실현손익">' + fmtMoney0(d.realizedPL) + '</td>' +
         '<td class="col-action">' +
           '<button type="button" class="btn btn-sm btn-ghost mu-day-edit">수정</button> ' +
@@ -3996,7 +4004,7 @@
         var after = inst.days.length - 1 - idx;
         var msg = fmtDate(target.date) + " 기록을 삭제할까요?";
         if (after > 0) msg += "\n\n뒤에 있는 " + after + "개 기록의 T·수량·평단·잔금이 이 기록을 기준으로 계산돼 있어서, 삭제 후 자동으로 다시 계산돼요.";
-        if (target.cashApplied && (target.fills||[]).length) msg += "\n\n이 날의 체결만큼 \"그외 예수금\"도 원래대로 돌아가요.";
+        if (target.cashApplied && (target.fills||[]).length) msg += "\n\n이 날의 체결만큼 무매 잔금과 계좌 현금 칸이 같이 원래대로 돌아가요 (그외 예수금은 그대로).";
         if (!confirm(msg)) return;
         mutateMuDays(inst, function(){ inst.days.splice(idx, 1); });
         delete historyView[inst.id];
@@ -4097,7 +4105,7 @@
     var otherCashTotal = extraCash;
     var cashTotal = vrPoolTotal + otherCashTotal;
     var pvCash = privacyCash(state.privacy);
-    var otherCashNet = otherCashAfterPrivacy();
+    var otherCashNet = otherCashLeft();
     var grandTotal = stockTotal + cashTotal;
 
     var head = document.createElement("div");
@@ -4147,8 +4155,9 @@
       stat("예수금 합계 (VR Pool + 그외, 도넛과 동일)", fmtCurrency(cashTotal)) +
       stat("└ VR Pool 합", fmtCurrency(vrPoolTotal)) +
       stat("└ Privacy 예수금", fmtCurrency(pvCash)) +
-      stat("└ 그외 예수금 = 계좌 현금 칸 − Privacy", fmtCurrency(otherCashNet), false, otherCashNet < 0 ? "var(--sell)" : undefined) +
-      '<div class="stat"><div class="label">VR Pool 외 계좌 현금 (Privacy 포함) <span class="hint">증권사 예수금 − VR Pool · ' + curSymbol() + ' 기준</span></div>' +
+      stat("└ 무매 예수금 (무매 잔금 합)", fmtCurrency(muCash())) +
+      stat("└ 그외 예수금 = 계좌 현금 칸 − Privacy − 무매", fmtCurrency(otherCashNet), false, otherCashNet < 0 ? "var(--sell)" : undefined) +
+      '<div class="stat"><div class="label">VR Pool 외 계좌 현금 (Privacy·무매 포함) <span class="hint">증권사 예수금 − VR Pool · ' + curSymbol() + ' 기준</span></div>' +
         '<input id="extraCashInput" type="number" autocomplete="off" inputmode="decimal" step="' + (krwViewRate() ? "1" : "0.0001") + '" class="cell-input" style="width:100%;" ' +
         'value="' + usdToInputValue(extraCash) + '" placeholder="' + (krwViewRate() ? "예: 700000" : "예: 500") + '" /></div>' +
       stat("VR 미실현수익금(수익률) — 실제평단 기준", vrProfit==null ? "실제평단 미입력" : pnlCombined(vrProfit, vrProfitPct), vrProfit==null, pfPnlColor(vrProfit)) +
@@ -4667,7 +4676,7 @@
 
     var setUp = p.startCash > 0 && p.multiple > 0;
     var pvCash = privacyCash(p);
-    var otherNet = otherCashAfterPrivacy();
+    var otherNet = otherCashLeft();
     var live = getLivePrice(PRIVACY_TICKER);
     var price = live != null ? live : (h.currentPrice || 0);
     var qty = h.qty || 0, avg = h.avgCost || 0;
@@ -4694,7 +4703,7 @@
       stat("평가손익(수익률)", qty ? (fmtCurrency(upl) + (cost > 0 ? (" (" + fmtPct(upl/cost*100, 1) + ")") : "")) : "–", false, plColor(upl)) +
       stat("실현손익", fmtCurrency(h.realizedPL || 0), false, plColor(h.realizedPL || 0)) +
       stat("Privacy 예수금", setUp ? fmtCurrency(pvCash) : "설정 전 (0)") +
-      stat("그외 예수금 <span class=\"hint\">계좌 현금 − Privacy</span>", fmtCurrency(otherNet), false, otherNet < 0 ? "var(--sell)" : undefined);
+      stat("그외 예수금 <span class=\"hint\">계좌 현금 − Privacy − 무매</span>", fmtCurrency(otherNet), false, otherNet < 0 ? "var(--sell)" : undefined);
     mainArea.appendChild(stats);
 
     var setCard = document.createElement("div");

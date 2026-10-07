@@ -3,7 +3,8 @@
    1) 직접입력 종목의 SOXL 을 Privacy 로 옮겨도 보유·평단·실현손익·예수금이 그대로인지
    2) 두 번 옮기지 않는지, 옮긴 뒤 SOXL 이 직접입력·Privacy 두 군데서 잡히지 않는지
    3) Privacy 예수금 = 잔금 × 배수 − 매수 + 매도 (시작일 다음 날부터), 설정 전엔 0
-   4) 그외 예수금 = extraCash − Privacy 예수금 (음수도 그대로), Privacy 매매로 안 변함
+   4) 그외 예수금 = extraCash − Privacy 예수금 − 무매 잔금 (음수도 그대로), Privacy·무매 매매로 안 변함
+   6) 무매를 통째로 지우면 그 잔금이 그외 예수금으로 돌아감 (계좌 현금 칸은 그대로)
    5) 동기화 신분증(recordIds)이 옮기기 전후로 같은지 — 다르면 옛 사본과 견줄 때 "사라졌다"로 오판
 
    index.html 에서 해당 함수들을 그대로 떼어내 돌린다.
@@ -23,8 +24,11 @@ function round4(n){ return Math.round(n*10000)/10000; }
 function todayStr(){ return "2026-10-06"; }
 function pad(n){ return n<10 ? "0"+n : ""+n; }
 var _id=0; function uid(){ return "id"+(++_id); }
+const calc=require(__dirname + '/../calc.js');
+var muLastState=calc.muLastState, replayMuDays=calc.replayMuDays, muNetCash=calc.muNetCash;
+function fmtDate(d){ return d; }
 eval(['manualHoldingSeed','migrateManualSeed','replayManualHolding','mutateManualTrades','syncKrwDeposit',
-  'emptyPrivacyHolding','normalizePrivacy','privacyCash','otherCashAfterPrivacy','allTradeHoldings',
+  'emptyPrivacyHolding','normalizePrivacy','privacyCash','muCash','otherCashLeft','mutateMuDays','allTradeHoldings',
   'isPrivacyTicker','migrateSoxlToPrivacy','recordIds',
   'manualRealizedMonth','manualRealizedDate','manualRealizedLabel','realizedPLBuckets'].map(grab).join('\n'));
 
@@ -71,29 +75,29 @@ eq('다시 계산 후 보유',h.qty,before.qty); eq('다시 계산 후 실현손
 
 // --- Privacy 예수금 ---
 eq('설정 전 Privacy 예수금 0',privacyCash(state.privacy),0);
-eq('설정 전 그외 = extraCash',otherCashAfterPrivacy(),state.portfolio.extraCash);
+eq('설정 전 그외 = extraCash',otherCashLeft(),state.portfolio.extraCash);
 state.privacy.multiple=6; state.privacy.startCash=100;   // 시작값 600
 // 매매(시작일 없음 = 전부): -480 + 336 - 110 = -254 → 346
 eq('시작일 없을 때 Privacy 예수금',privacyCash(state.privacy),600-480+336-110);
 state.privacy.startDate='2026-08-05';                     // 8/5 매매는 잔금에 이미 들어 있음 → 8/9 만
 eq('시작일 다음 날부터',privacyCash(state.privacy),600-110);
-eq('그외 = extraCash - Privacy',otherCashAfterPrivacy(),round2(state.portfolio.extraCash-490));
+eq('그외 = extraCash - Privacy',otherCashLeft(),round2(state.portfolio.extraCash-490));
 // Privacy 매수: extraCash 와 Privacy 예수금이 같이 줄어 그외는 그대로
-var other0=otherCashAfterPrivacy(), ec0=state.portfolio.extraCash;
+var other0=otherCashLeft(), ec0=state.portfolio.extraCash;
 add(h,{date:'2026-09-01',type:'buy',qty:100,price:30});
 eq('Privacy 매수로 extraCash 감소',state.portfolio.extraCash,ec0-3000);
-eq('Privacy 매수로 그외는 그대로',otherCashAfterPrivacy(),other0);
+eq('Privacy 매수로 그외는 그대로',otherCashLeft(),other0);
 // 큰 매도·삭제도 마찬가지
 add(h,{date:'2026-09-02',type:'sell',qty:50,price:33});
-eq('Privacy 매도 후에도 그외 그대로',otherCashAfterPrivacy(),other0);
+eq('Privacy 매도 후에도 그외 그대로',otherCashLeft(),other0);
 mutateManualTrades(h,function(l){ l.splice(l.findIndex(t=>t.date==='2026-09-02'),1); });
-eq('Privacy 삭제 후에도 그외 그대로',otherCashAfterPrivacy(),other0);
+eq('Privacy 삭제 후에도 그외 그대로',otherCashLeft(),other0);
 // VR Pool 돈을 끌어다 쓴 경우: 그외가 음수 — 그대로 둔다
 state.portfolio.extraCash=200; state.privacy.startDate=null; state.privacy.startCash=1000;
 var pv=privacyCash(state.privacy);
 ok('Privacy 예수금이 양수', pv>200);
-eq('그외 음수 그대로',otherCashAfterPrivacy(),round2(200-pv));
-ok('그외가 음수', otherCashAfterPrivacy()<0);
+eq('그외 음수 그대로',otherCashLeft(),round2(200-pv));
+ok('그외가 음수', otherCashLeft()<0);
 
 // --- 다른 회원: SOXL 이 없으면 옮길 게 없고, 빈 Privacy 는 아무 데도 안 잡힌다 ---
 state={instances:[],muInstances:[],portfolio:{extraCash:100,holdings:[aapl],cashLog:[],manualRealized:[]}};
@@ -105,6 +109,28 @@ state.portfolio.holdings=[{ticker:'SOXL',trades:[],qty:1,seedQty:1,seedAvgCost:1
 ok('SOXL 줄이 둘이면 거절', migrateSoxlToPrivacy()!==null && state.portfolio.holdings.length===2);
 // 옛 사본(서버·백업)에는 privacy 가 없다 — 신분증 계산이 터지면 안 된다
 ok('privacy 없는 옛 사본도 신분증 계산', Array.isArray(recordIds({portfolio:{holdings:[aapl]}})));
+
+// --- 무매 예수금: 그외에서 떼어 보여주고, 무매를 지우면 그외로 돌아간다 ---
+state={instances:[],muInstances:[],portfolio:{extraCash:5000,holdings:[],cashLog:[],manualRealized:[]}};
+normalizePrivacy();
+var mu={id:'m1',name:'무매1',ticker:'TQQQ',splitCount:40,principal:4000,startDate:'2026-09-01',days:[]};
+state.muInstances.push(mu);
+eq('체결 전 무매 예수금 = 원금',muCash(),4000);
+eq('체결 전 그외 = extraCash - 원금',otherCashLeft(),1000);
+var o0=otherCashLeft();
+mutateMuDays(mu,function(){ mu.days.push({id:uid(),v:2,date:'2026-09-02',close:50,fills:[{type:'buy',qty:10,price:50}],cashApplied:true}); });
+eq('무매 매수로 extraCash 감소',state.portfolio.extraCash,4500);
+eq('무매 매수로 잔금 감소',muCash(),3500);
+eq('무매 매수로 그외는 그대로',otherCashLeft(),o0);
+mutateMuDays(mu,function(){ mu.days.push({id:uid(),v:2,date:'2026-09-10',close:60,fills:[{type:'sell',qty:10,price:60}],cashApplied:true}); });
+eq('사이클 끝 수량 0',muLastState(mu).qty,0);
+eq('사이클 끝 잔금 = 원금 + 수익',muCash(),4100);
+eq('무매 매도 후에도 그외 그대로',otherCashLeft(),o0);
+var ecEnd=state.portfolio.extraCash;
+state.muInstances=state.muInstances.filter(function(i){ return i.id!=='m1'; });   // [삭제] 버튼과 같은 처리
+eq('무매 삭제해도 계좌 현금 칸 그대로',state.portfolio.extraCash,ecEnd);
+eq('무매 삭제하면 잔금이 그외로',otherCashLeft(),o0+4100);
+eq('무매 없으면 무매 예수금 0',muCash(),0);
 
 console.log(JSON.stringify(bad,null,1));
 process.exitCode = bad.length ? 1 : 0;
